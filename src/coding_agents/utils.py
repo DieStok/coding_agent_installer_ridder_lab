@@ -11,6 +11,13 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from coding_agents.dry_run import (
+    content_fingerprint,
+    fake_completed_process,
+    is_dry_run,
+    would,
+)
+
 log = logging.getLogger("coding-agents")
 
 # Strict regex for paths safe to interpolate into shell code
@@ -28,6 +35,16 @@ def secure_write_text(path: Path, content: str) -> None:
     the file is world-readable. Essential on shared HPC clusters.
     """
     log.debug("secure_write_text: %s (%d bytes)", path, len(content))
+    if is_dry_run():
+        would(
+            "file_write",
+            "secure_write_text",
+            path=path,
+            bytes=len(content),
+            sha8=content_fingerprint(content),
+            mode="0o600",
+        )
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
@@ -52,6 +69,17 @@ def run(
 ) -> subprocess.CompletedProcess:
     """Run a command with NFS retry on errno 116 (stale file handle)."""
     log.debug("run: cmd=%s cwd=%s timeout=%d", cmd, cwd, timeout)
+    if is_dry_run():
+        would(
+            "subprocess",
+            "run",
+            cmd=cmd,
+            cwd=cwd,
+            shell=shell,
+            timeout=timeout,
+            env_overlay=sorted((env or {}).keys()),
+        )
+        return fake_completed_process(cmd, capture=capture)
     merged_env = {**os.environ, **(env or {})}
     kwargs = dict(
         timeout=timeout,
@@ -97,6 +125,15 @@ def safe_symlink(source: Path, target: Path) -> None:
     If *target* already exists as a regular file, it is backed up to .bak.
     """
     log.debug("safe_symlink: %s → %s", source, target)
+    if is_dry_run():
+        would(
+            "symlink",
+            "create",
+            src=source,
+            target=target,
+            replaces_existing=target.exists() or target.is_symlink(),
+        )
+        return
     target = target.resolve() if target.exists() else target
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -126,7 +163,10 @@ def npm_install(prefix: Path, package: str) -> subprocess.CompletedProcess:
     """Install an npm package with NFS-safe flags."""
     log.debug("npm_install: package=%s prefix=%s", package, prefix)
     cache_dir = prefix / ".npm-cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    if is_dry_run():
+        would("mkdir", "create_dir", path=cache_dir, parents=True, exist_ok=True)
+    else:
+        cache_dir.mkdir(parents=True, exist_ok=True)
     return run(
         [
             "npm", "install",
@@ -155,7 +195,10 @@ def uv_pip_install(venv_path: Path, packages: list[str], *, upgrade: bool = Fals
     log.debug("uv_pip_install: packages=%s upgrade=%s venv=%s", packages, upgrade, venv_path)
     install_dir = venv_path.parent.parent  # tools/.venv -> install_dir/tools
     cache_dir = install_dir / ".uv-cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    if is_dry_run():
+        would("mkdir", "create_dir", path=cache_dir, parents=True, exist_ok=True)
+    else:
+        cache_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = ["uv", "pip", "install", "--python", str(venv_path / "bin" / "python")]
     if upgrade:
@@ -175,6 +218,8 @@ def inject_shell_block(install_dir: Path) -> list[Path]:
     """Add PATH/env block to ~/.bashrc and ~/.zshrc (if zsh). Returns modified files."""
     log.debug("inject_shell_block: install_dir=%s", install_dir)
     path_str = str(install_dir)
+    # Security check runs BEFORE the dry-run short-circuit so dry-run never
+    # masks a bad configuration.
     if not _SAFE_PATH_RE.match(path_str):
         raise ValueError(f"Install path contains unsafe characters: {path_str}")
     quoted = shlex.quote(path_str)
@@ -190,6 +235,16 @@ export JAI_CONFIG_DIR="$CODING_AGENT_INSTALL_DIR/jai"
     if "zsh" in shell:
         rc_files.append(Path.home() / ".zshrc")
 
+    if is_dry_run():
+        would(
+            "shell_rc",
+            "inject_block",
+            rc_files=rc_files,
+            marker=SHELL_MARKERS[0],
+            bytes=len(block),
+        )
+        return rc_files
+
     modified = []
     for rc in rc_files:
         _write_guarded_block(rc, block)
@@ -199,26 +254,36 @@ export JAI_CONFIG_DIR="$CODING_AGENT_INSTALL_DIR/jai"
 
 def remove_shell_block() -> list[Path]:
     """Remove the coding-agents block from shell rc files."""
-    modified = []
+    # Pre-compute the list of rc files that *would* be modified — we need
+    # this both for real-run (same set) and dry-run logging.
+    candidates = []
     for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
         if not rc.exists():
             continue
+        if SHELL_MARKERS[0] in rc.read_text():
+            candidates.append(rc)
+
+    if is_dry_run():
+        would("shell_rc", "remove_block", rc_files=candidates, marker=SHELL_MARKERS[0])
+        return candidates
+
+    modified = []
+    for rc in candidates:
         content = rc.read_text()
-        if SHELL_MARKERS[0] in content:
-            lines = content.splitlines(keepends=True)
-            new_lines = []
-            inside = False
-            for line in lines:
-                if SHELL_MARKERS[0] in line:
-                    inside = True
-                    continue
-                if SHELL_MARKERS[1] in line:
-                    inside = False
-                    continue
-                if not inside:
-                    new_lines.append(line)
-            rc.write_text("".join(new_lines))
-            modified.append(rc)
+        lines = content.splitlines(keepends=True)
+        new_lines = []
+        inside = False
+        for line in lines:
+            if SHELL_MARKERS[0] in line:
+                inside = True
+                continue
+            if SHELL_MARKERS[1] in line:
+                inside = False
+                continue
+            if not inside:
+                new_lines.append(line)
+        rc.write_text("".join(new_lines))
+        modified.append(rc)
     return modified
 
 

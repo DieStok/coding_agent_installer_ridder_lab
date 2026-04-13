@@ -25,6 +25,14 @@ from coding_agents.config import (
     mark_installed,
     save_config,
 )
+from coding_agents.dry_run import is_dry_run, would
+from coding_agents.installer.fs_ops import (
+    dry_run_copy,
+    dry_run_copytree,
+    dry_run_mkdir,
+    dry_run_rmtree,
+    dry_run_write_text,
+)
 from coding_agents.installer.state import InstallerState
 from coding_agents.utils import (
     inject_shell_block,
@@ -71,7 +79,7 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
     log.write("\n[bold]Creating directory structure...[/bold]")
     for subdir in ["bin", "config", "config/mcp", "config/templates", "hooks",
                     "jai", "skills", "tools", "tools/bin", "logs", "node_modules"]:
-        (install_dir / subdir).mkdir(parents=True, exist_ok=True)
+        dry_run_mkdir(install_dir / subdir)
 
     bundled = _bundled_dir()
 
@@ -275,7 +283,7 @@ async def _install_claude_statusbar(log: RichLog) -> None:
         log.write(f"    [yellow]cs --install-deps: {exc}[/yellow]")
 
     settings_path = Path.home() / ".claude" / "settings.json"
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(settings_path.parent)
     existing: dict = {}
     if settings_path.exists():
         try:
@@ -386,6 +394,17 @@ def _install_shellcheck(install_dir: Path) -> None:
     system = platform.system().lower()
     url = f"https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.{system}.{arch}.tar.xz"
 
+    dest = install_dir / "tools" / "bin" / "shellcheck"
+
+    if is_dry_run():
+        # Simulate the full chain: download → extract → copy → chmod.
+        would("network", "urlretrieve", url=url, dest="<tmpdir>/shellcheck.tar.xz")
+        would("archive", "extract", archive="<tmpdir>/shellcheck.tar.xz", member="shellcheck")
+        dry_run_mkdir(dest.parent)
+        would("file_copy", "copy2", src="<tmpdir>/shellcheck", dst=dest, bytes=0)
+        would("file_chmod", "chmod", path=dest, mode="0o755")
+        return
+
     with tempfile.TemporaryDirectory() as tmpdir:
         archive = Path(tmpdir) / "shellcheck.tar.xz"
         urllib.request.urlretrieve(url, str(archive))
@@ -401,7 +420,6 @@ def _install_shellcheck(install_dir: Path) -> None:
                     break
 
         src = Path(tmpdir) / "shellcheck"
-        dest = install_dir / "tools" / "bin" / "shellcheck"
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dest))
         dest.chmod(0o755)
@@ -412,7 +430,7 @@ async def _install_skills(
 ) -> None:
     """Install skills — git clone for external, copy for bundled."""
     skills_dir = install_dir / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(skills_dir)
 
     for skill in skills:
         if skill in GIT_SKILLS:
@@ -435,8 +453,8 @@ async def _install_skills(
             dest = skills_dir / skill
             if src.exists():
                 if dest.exists():
-                    shutil.rmtree(str(dest))
-                shutil.copytree(str(src), str(dest))
+                    dry_run_rmtree(dest)
+                dry_run_copytree(src, dest)
                 log.write(f"  [green]✓[/green] {skill} (bundled)")
             else:
                 log.write(f"  [yellow]Bundled skill {skill} not found at {src}[/yellow]")
@@ -447,7 +465,7 @@ async def _install_hooks(
 ) -> None:
     """Copy hook scripts to install dir."""
     hooks_dir = install_dir / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(hooks_dir)
 
     for hook in hooks:
         script_name = HOOK_SCRIPTS.get(hook)
@@ -456,7 +474,7 @@ async def _install_hooks(
         src = bundled / "hooks" / script_name
         dest = hooks_dir / script_name
         if src.exists():
-            shutil.copy2(str(src), str(dest))
+            dry_run_copy(src, dest)
             log.write(f"  [green]✓[/green] {script_name}")
         else:
             log.write(f"  [yellow]Hook {script_name} not found at {src}[/yellow]")
@@ -464,7 +482,7 @@ async def _install_hooks(
     # Also copy deny_rules.json
     deny_src = bundled / "hooks" / "deny_rules.json"
     if deny_src.exists():
-        shutil.copy2(str(deny_src), str(hooks_dir / "deny_rules.json"))
+        dry_run_copy(deny_src, hooks_dir / "deny_rules.json")
         log.write("  [green]✓[/green] deny_rules.json")
 
 
@@ -473,12 +491,12 @@ async def _install_jai(
 ) -> None:
     """Copy jai config files."""
     jai_dir = install_dir / "jai"
-    jai_dir.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(jai_dir)
 
     # Copy .defaults
     defaults_src = bundled / "jai" / ".defaults"
     if defaults_src.exists():
-        shutil.copy2(str(defaults_src), str(jai_dir / ".defaults"))
+        dry_run_copy(defaults_src, jai_dir / ".defaults")
         log.write("  [green]✓[/green] .defaults")
 
     # Copy per-agent configs
@@ -486,7 +504,7 @@ async def _install_jai(
         conf_name = AGENTS[agent_key]["jai_conf"]
         src = bundled / "jai" / conf_name
         if src.exists():
-            shutil.copy2(str(src), str(jai_dir / conf_name))
+            dry_run_copy(src, jai_dir / conf_name)
             log.write(f"  [green]✓[/green] {conf_name}")
 
 
@@ -501,27 +519,27 @@ async def _install_config(
         agents_md_src = bundled / "config" / "AGENTS_HPC.md"
     agents_md_dest = install_dir / "config" / "AGENTS.md"
     if agents_md_src.exists():
-        shutil.copy2(str(agents_md_src), str(agents_md_dest))
+        dry_run_copy(agents_md_src, agents_md_dest)
         log.write(f"  [green]✓[/green] AGENTS.md ({mode} version)")
 
     # Template
     tmpl_src = bundled / "config" / "templates" / "PROJECT_LOCAL_AGENTS_TEMPLATE.md"
     tmpl_dest = install_dir / "config" / "templates" / "PROJECT_LOCAL_AGENTS_TEMPLATE.md"
-    tmpl_dest.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(tmpl_dest.parent)
     if tmpl_src.exists():
-        shutil.copy2(str(tmpl_src), str(tmpl_dest))
+        dry_run_copy(tmpl_src, tmpl_dest)
         log.write("  [green]✓[/green] PROJECT_LOCAL_AGENTS_TEMPLATE.md")
 
     # MCP example
     mcp_src = bundled / "config" / "mcp" / "servers.json.example"
     mcp_dest = install_dir / "config" / "mcp" / "servers.json.example"
-    mcp_dest.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(mcp_dest.parent)
     if mcp_src.exists():
-        shutil.copy2(str(mcp_src), str(mcp_dest))
+        dry_run_copy(mcp_src, mcp_dest)
         # If no servers.json exists yet, create from example
         servers_json = install_dir / "config" / "mcp" / "servers.json"
         if not servers_json.exists():
-            shutil.copy2(str(mcp_src), str(servers_json))
+            dry_run_copy(mcp_src, servers_json)
         log.write("  [green]✓[/green] MCP config")
 
 
@@ -552,7 +570,7 @@ async def _install_vscode_extensions(
 async def _create_jai_wrappers(agents: list[str], install_dir: Path, log: RichLog) -> None:
     """Create jai-<agent> wrapper scripts in bin/."""
     bin_dir = install_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(bin_dir)
 
     for agent_key in agents:
         agent = AGENTS[agent_key]
@@ -571,6 +589,5 @@ else
     exec {binary} "$@"
 fi
 """
-        wrapper_path.write_text(script)
-        wrapper_path.chmod(0o755)
+        dry_run_write_text(wrapper_path, script, mode=0o755)
         log.write(f"  [green]✓[/green] {wrapper_name}")

@@ -1,6 +1,8 @@
 """CLI entrypoint — Typer app with 6 subcommands."""
 from __future__ import annotations
 
+import atexit
+
 import typer
 from rich.console import Console
 
@@ -11,22 +13,54 @@ app = typer.Typer(
 console = Console()
 
 
+def _summary_atexit() -> None:
+    """Emit the dry-run summary at process exit — covers both the sync
+    command paths and the async TUI path without plumbing it through every
+    subcommand."""
+    from coding_agents.dry_run import emit_summary, is_dry_run
+
+    if is_dry_run():
+        emit_summary()
+
+
+atexit.register(_summary_atexit)
+
+
 @app.callback()
 def main(
-    debug: bool = typer.Option(False, "--debug", help="Enable comprehensive debug logging to stderr and log file."),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable comprehensive debug logging to stderr and log file.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Walk through every step without making any changes. Implies --debug.",
+    ),
 ) -> None:
     """Cross-agent configuration and installer for AI coding agents."""
-    if debug:
-        from coding_agents.config import load_config, get_install_dir
-        from coding_agents.logging_setup import configure_logging
+    if not (debug or dry_run):
+        return
 
-        config = load_config()
-        log_dir = None
-        if config.get("install_dir"):
-            log_dir = get_install_dir(config) / "logs"
-        log_file = configure_logging(debug=True, log_dir=log_dir)
-        if log_file:
-            console.print(f"[dim]Debug log: {log_file}[/dim]")
+    from coding_agents.config import load_config, get_install_dir
+    from coding_agents.dry_run import set_dry_run
+    from coding_agents.logging_setup import configure_logging
+
+    config = load_config()
+    log_dir = None
+    if config.get("install_dir"):
+        log_dir = get_install_dir(config) / "logs"
+    log_file = configure_logging(debug=debug, log_dir=log_dir, dry_run=dry_run)
+    if dry_run:
+        set_dry_run(True)
+    if log_file:
+        tag = "Dry-run log" if dry_run else "Debug log"
+        console.print(f"[dim]{tag}: {log_file}[/dim]")
+    if dry_run:
+        console.print(
+            "[bold yellow]DRY-RUN MODE — NO CHANGES WILL BE MADE[/bold yellow]"
+        )
 
 
 @app.command()

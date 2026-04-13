@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 
 from rich.console import Console
 
 from coding_agents.agents import AGENTS, agents_with_vscode_ext
 from coding_agents.config import HOOK_SCRIPTS, load_config, get_install_dir
+from coding_agents.installer.fs_ops import (
+    dry_run_append_text,
+    dry_run_mkdir,
+    dry_run_symlink_to,
+    dry_run_write_text,
+)
 
 console = Console()
 
@@ -80,13 +85,16 @@ def _create_agents_md(install_dir: Path, project: Path) -> None:
 
     if not template_path.exists():
         console.print("  [yellow]Template not found, creating minimal AGENTS.md[/yellow]")
-        agents_md.write_text(f"# Project: {project.name}\n\n> Edit this file to guide AI coding agents.\n")
+        dry_run_write_text(
+            agents_md,
+            f"# Project: {project.name}\n\n> Edit this file to guide AI coding agents.\n",
+        )
         return
 
     content = template_path.read_text()
     content = content.replace("{PROJECT_NAME}", project.name)
     content = content.replace("{USERNAME}", os.environ.get("USER", "unknown"))
-    agents_md.write_text(content)
+    dry_run_write_text(agents_md, content)
     console.print("  [green]✓[/green] AGENTS.md created from template")
 
 
@@ -101,7 +109,7 @@ def _create_instruction_symlinks(project: Path) -> None:
         if target.exists():
             continue
         try:
-            target.symlink_to("AGENTS.md")
+            dry_run_symlink_to(target, "AGENTS.md")
             console.print(f"  [green]✓[/green] {name} → AGENTS.md")
         except OSError:
             console.print(f"  [yellow]Could not create {name} symlink[/yellow]")
@@ -131,7 +139,7 @@ def _create_claude_project_config(
 ) -> None:
     """Create .claude/settings.json with hooks using absolute paths."""
     config_dir = project / ".claude"
-    config_dir.mkdir(exist_ok=True)
+    dry_run_mkdir(config_dir, parents=False)
     settings_path = config_dir / "settings.json"
 
     if settings_path.exists():
@@ -159,13 +167,14 @@ def _create_claude_project_config(
 def _create_codex_project_config(project: Path) -> None:
     """Create .codex/config.toml stub."""
     config_dir = project / ".codex"
-    config_dir.mkdir(exist_ok=True)
+    dry_run_mkdir(config_dir, parents=False)
     config_path = config_dir / "config.toml"
     if config_path.exists():
         return
-    config_path.write_text(
+    dry_run_write_text(
+        config_path,
         "# Codex CLI project config\n"
-        "# See: https://developers.openai.com/codex/config-reference\n"
+        "# See: https://developers.openai.com/codex/config-reference\n",
     )
     console.print("  [green]✓[/green] .codex/config.toml")
 
@@ -173,11 +182,11 @@ def _create_codex_project_config(project: Path) -> None:
 def _create_pi_project_config(project: Path) -> None:
     """Create .pi/settings.json stub."""
     config_dir = project / ".pi"
-    config_dir.mkdir(exist_ok=True)
+    dry_run_mkdir(config_dir, parents=False)
     config_path = config_dir / "settings.json"
     if config_path.exists():
         return
-    config_path.write_text(json.dumps({"project": project.name}, indent=2) + "\n")
+    dry_run_write_text(config_path, json.dumps({"project": project.name}, indent=2) + "\n")
     console.print("  [green]✓[/green] .pi/settings.json")
 
 
@@ -186,7 +195,7 @@ def _create_opencode_project_config(project: Path) -> None:
     config_path = project / "opencode.json"
     if config_path.exists():
         return
-    config_path.write_text(json.dumps({"project": project.name}, indent=2) + "\n")
+    dry_run_write_text(config_path, json.dumps({"project": project.name}, indent=2) + "\n")
     console.print("  [green]✓[/green] opencode.json")
 
 
@@ -210,12 +219,13 @@ def _update_gitignore(project: Path) -> None:
     if not new_entries:
         return
 
-    with open(gitignore, "a") as f:
-        if existing and not existing.endswith("\n"):
-            f.write("\n")
-        f.write("\n# Agent configuration directories\n")
-        for entry in new_entries:
-            f.write(entry + "\n")
+    to_append = ""
+    if existing and not existing.endswith("\n"):
+        to_append += "\n"
+    to_append += "\n# Agent configuration directories\n"
+    for entry in new_entries:
+        to_append += entry + "\n"
+    dry_run_append_text(gitignore, to_append)
     console.print("  [green]✓[/green] .gitignore updated")
 
 
@@ -236,7 +246,7 @@ def _check_git_entire(project: Path, config: dict) -> None:
 def _create_vscode_extensions(project: Path, agents: list[str]) -> None:
     """Create .vscode/extensions.json with recommended extensions."""
     vscode_dir = project / ".vscode"
-    vscode_dir.mkdir(exist_ok=True)
+    dry_run_mkdir(vscode_dir, parents=False)
     ext_path = vscode_dir / "extensions.json"
 
     if ext_path.exists():
@@ -247,7 +257,7 @@ def _create_vscode_extensions(project: Path, agents: list[str]) -> None:
     recommendations = [ext_id for _, ext_id in exts]
 
     data = {"recommendations": recommendations}
-    ext_path.write_text(json.dumps(data, indent=2) + "\n")
+    dry_run_write_text(ext_path, json.dumps(data, indent=2) + "\n")
     console.print("  [green]✓[/green] .vscode/extensions.json")
 
 
@@ -287,7 +297,7 @@ def _apply_selected(
         target = project / "CLAUDE.md"
         if not target.exists():
             try:
-                target.symlink_to("AGENTS.md")
+                dry_run_symlink_to(target, "AGENTS.md")
                 console.print("  [green]✓[/green] CLAUDE.md → AGENTS.md")
             except OSError:
                 pass
@@ -296,7 +306,7 @@ def _apply_selected(
         target = project / "GEMINI.md"
         if not target.exists():
             try:
-                target.symlink_to("AGENTS.md")
+                dry_run_symlink_to(target, "AGENTS.md")
                 console.print("  [green]✓[/green] GEMINI.md → AGENTS.md")
             except OSError:
                 pass
@@ -307,7 +317,7 @@ def _apply_selected(
         from coding_agents.merge_settings import merge_claude_hooks
 
         settings_path = project / ".claude" / "settings.json"
-        settings_path.parent.mkdir(exist_ok=True)
+        dry_run_mkdir(settings_path.parent, parents=False)
         hook_entries = build_hook_entries(install_dir, hooks)
         if hook_entries:
             results = merge_claude_hooks(settings_path, hook_entries)

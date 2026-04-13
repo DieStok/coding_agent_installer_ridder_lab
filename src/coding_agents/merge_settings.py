@@ -153,9 +153,23 @@ def merge_json_section(
         result.merged = copy.deepcopy(current_value)
 
     # Write back with restricted permissions
+    from coding_agents.dry_run import is_dry_run, would
     from coding_agents.utils import secure_write_text
 
-    secure_write_text(file_path, json.dumps(existing, indent=2) + "\n")
+    if is_dry_run():
+        # Richer category than a plain file_write — shows what the merge
+        # semantics produced without triggering the secure_write_text
+        # interceptor as well.
+        would(
+            "json_merge",
+            "write",
+            path=file_path,
+            section=section_path,
+            added=len(result.added_keys),
+            preserved=len(result.preserved_keys),
+        )
+    else:
+        secure_write_text(file_path, json.dumps(existing, indent=2) + "\n")
 
     return result
 
@@ -221,9 +235,19 @@ def merge_toml_section(
         content += "\n"
     content += marked_block
 
+    from coding_agents.dry_run import is_dry_run, would
     from coding_agents.utils import secure_write_text
 
-    secure_write_text(file_path, content)
+    if is_dry_run():
+        would(
+            "json_merge",
+            "write_toml",
+            path=file_path,
+            section="mcp_servers",
+            bytes=len(content),
+        )
+    else:
+        secure_write_text(file_path, content)
 
     result.added_keys = ["coding-agents MCP block"]
     return result

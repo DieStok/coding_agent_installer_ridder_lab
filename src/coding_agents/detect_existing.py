@@ -146,6 +146,20 @@ def backup_agent_dir(inv: AgentInventory) -> Path | None:
                 backup_path = alt
                 break
 
+    from coding_agents.dry_run import is_dry_run, would
+
+    if is_dry_run():
+        would(
+            "backup",
+            "create_tar",
+            source=inv.config_dir,
+            target=backup_path,
+            files=inv.file_count,
+            est_bytes=inv.total_size,
+        )
+        inv.backup_path = backup_path
+        return backup_path
+
     try:
         with tarfile.open(str(backup_path), "w:gz") as tar:
             tar.add(

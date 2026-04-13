@@ -98,9 +98,18 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     """Write config to disk with restricted permissions (0o600)."""
+    from coding_agents.dry_run import is_dry_run, would
     from coding_agents.utils import secure_write_text
 
     log.debug("save_config: writing to %s", CONFIG_PATH)
+    if is_dry_run():
+        would(
+            "config_save",
+            "save_config",
+            path=CONFIG_PATH,
+            keys=sorted(config.keys()),
+        )
+        return
     secure_write_text(CONFIG_PATH, json.dumps(config, indent=2) + "\n")
 
 

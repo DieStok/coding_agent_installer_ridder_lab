@@ -12,6 +12,7 @@ from pathlib import Path
 _log = logging.getLogger("coding-agents")
 
 from coding_agents.agents import AGENTS
+from coding_agents.installer.fs_ops import dry_run_mkdir
 from coding_agents.utils import secure_write_text
 
 
@@ -111,7 +112,7 @@ def _write_claude(servers: dict, home: Path) -> list[str]:
 def _write_codex(servers: dict, home: Path) -> list[str]:
     """Codex CLI uses TOML with marker-based sections."""
     config_path = home / ".codex" / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(config_path.parent)
 
     marker_start = "# >>> coding-agents MCP >>>"
     marker_end = "# <<< coding-agents MCP <<<"
