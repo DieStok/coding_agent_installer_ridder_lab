@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "coding-agents"
+version = "0.1.0"
+description = "Cross-agent configuration and installer for UMC Utrecht HPC cluster"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "typer>=0.15",
+    "textual>=3.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+coding-agents = "coding_agents.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coding_agents"]

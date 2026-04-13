@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test & cache
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# uv / pip
+.uv-cache/
+pip-log.txt
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Auto-backups from local dev (filename.ext.backup)
+*.backup
+
+# Runtime logs
+logs/
+*.log
+
+# Node (install targets; not relevant here but harmless)
+node_modules/

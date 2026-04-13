@@ -1,0 +1,25 @@
+# jai sandbox defaults for coding agents
+# See: https://jai.scs.stanford.edu/security.html
+#
+# These defaults are shared across all agent jail configs.
+# They mask sensitive directories and filter dangerous env vars.
+
+# Mask sensitive directories (hidden from jailed processes)
+mask .ssh
+mask .gnupg
+mask .aws
+mask .docker
+mask .kube
+mask .config/gh
+mask .netrc
+
+# Filter environment variables containing secrets
+unsetenv *_TOKEN
+unsetenv *_KEY
+unsetenv *_SECRET
+unsetenv *_PASSWORD
+unsetenv AWS_ACCESS_KEY_ID
+unsetenv AWS_SECRET_ACCESS_KEY
+unsetenv AWS_SESSION_TOKEN
+unsetenv GITHUB_TOKEN
+unsetenv GH_TOKEN

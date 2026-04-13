@@ -1,0 +1,14 @@
+{
+  "$schema": "Canonical MCP server definitions. Run `coding-agents sync` to distribute to all agents.",
+  "servers": {
+    "example-github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "transport": "stdio",
+      "url": null
+    }
+  }
+}

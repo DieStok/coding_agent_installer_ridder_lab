@@ -1,0 +1,22 @@
+{
+  "description": "Permission deny rules to prevent agents from reading sensitive files",
+  "deny": [
+    "Read(./.env)",
+    "Read(./.env.*)",
+    "Read(./secrets/**)",
+    "Read(./config/credentials.json)",
+    "Read(./.entire/metadata/**)",
+    "Read(./build)"
+  ],
+  "claude_code_permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./config/credentials.json)",
+      "Read(./.entire/metadata/**)",
+      "Read(./build)"
+    ]
+  },
+  "codex_starlark_rules": "# Auto-generated deny rules for Codex CLI\nprefix_rule(\n    pattern = [\"cat\", \".env\"],\n    decision = \"forbidden\",\n    justification = \"Reading .env files is denied by policy\"\n)\nprefix_rule(\n    pattern = [\"cat\", \"secrets/\"],\n    decision = \"forbidden\",\n    justification = \"Reading secrets directory is denied by policy\"\n)\nprefix_rule(\n    pattern = [\"cat\", \"config/credentials.json\"],\n    decision = \"forbidden\",\n    justification = \"Reading credentials file is denied by policy\"\n)\n"
+}
