@@ -18,23 +18,44 @@ for multiple AI coding agents.
 ## Prerequisites
 
 `coding-agents` is a thin orchestrator — it does not bootstrap your language
-runtimes. Install these *before* running the installer. `coding-agents doctor`
-reports missing pieces after the fact and prints the exact fix command, but
-nothing here is auto-installed.
+runtimes. The **must-haves** below need to be present before you can install
+the package. Don't try to eyeball whether you have them: the repo ships a
+diagnostic script that checks everything and prints a copy-paste install
+command for anything missing (see Quick Start, step 2).
 
-| Tool | Required for | Install |
-|---|---|---|
-| `git` | Cloning this repo + the git-hosted skills (compound-engineering, scientific-agent-skills, autoresearch) | `brew install git` / package manager |
-| Python ≥ 3.12 | Running the `coding-agents` CLI itself | `brew install python@3.12` / `uv python install 3.12` |
-| `uv` | Installing this package and building the tools venv (linters, crawl4ai, `uv tool install claude-statusbar`) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Node.js + `npm` | Every agent except Claude Code (Codex, OpenCode, Pi, Gemini, Amp), plus `biome` and `agent-browser` tools | `brew install node` / your OS installer |
-| `curl` | Claude Code's native installer | Preinstalled on macOS/Linux |
+| Must-have | What it's for |
+|---|---|
+| `git` | Cloning this repo + the git-hosted skills (compound-engineering, scientific-agent-skills, autoresearch) |
+| `curl` | Claude Code's native installer; also used by `uv`, `entire`, etc. |
+| `bash` | Running the installer and its hooks/wrappers |
+| `unzip`, `tar` | Extracting the `hpc-cluster.skill` archive and various tool tarballs |
+| Node.js + `npm` | Codex, OpenCode, Pi, Gemini, Amp, biome, agent-browser |
+| Python ≥ 3.12 | Running the `coding-agents` CLI itself (enforced by `pyproject.toml`) |
+| `uv` | Installing this package and managing the tools venv (ruff, vulture, pyright, yamllint, crawl4ai) + `claude-statusbar` |
 
 Things the installer *does* handle for you once the above are present: the
 Claude Code binary (`curl … | bash`), every npm-installed agent, the Python
-tools venv (ruff, vulture, pyright, yamllint, crawl4ai), `@biomejs/biome`,
-`agent-browser`, `shellcheck`, the `entire` CLI, and `claude-statusbar`
-(via `uv tool install`).
+tools venv, `@biomejs/biome`, `agent-browser`, `shellcheck`, the `entire`
+CLI, and `claude-statusbar`.
+
+### What is already there on the UMC Utrecht HPC submit nodes
+
+Verified on `hpcs05`/`hpcs06` (RHEL 8.10) by `scripts/hpc_prereq_check.sh`:
+
+- **System-wide (nothing to install)**: `git`, `bash`, `zsh`, `curl`,
+  `node`/`npm` (Node.js 18 in `/usr/bin`), `unzip`, `tar`.
+- **Not installed system-wide; install in your home directory** (no admin
+  rights needed): `uv` and a Python ≥ 3.12 interpreter.
+- **Network**: outbound HTTPS to `claude.ai`, `registry.npmjs.org`,
+  `astral.sh`, `github.com`, and `entire.io` all work from submit nodes;
+  no proxy configuration needed.
+- **No Lmod `module load` step is required** for any of the prereqs on
+  these nodes.
+
+The exact install commands for `uv` and Python 3.12 are printed by the
+diagnostic script — see Quick Start step 2. Don't copy-paste them from
+someone else's shell; the script tells you which recipe is right for your
+environment.
 
 ## Quick Start
 
@@ -43,20 +64,30 @@ tools venv (ruff, vulture, pyright, yamllint, crawl4ai), `@biomejs/biome`,
 git clone https://github.com/DieStok/coding_agent_installer_ridder_lab.git
 cd coding_agent_installer_ridder_lab
 
-# 2. Install the package (uv must already be on PATH — see Prerequisites)
-uv pip install .
+# 2. Check prerequisites (non-destructive; exits non-zero if anything's missing)
+bash scripts/hpc_prereq_check.sh
+#    For each must-have marked [FAIL], the script prints the exact command
+#    to install it (e.g. uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`,
+#    Python 3.12: `uv python install 3.12`). Run those, open a fresh shell
+#    (or `source ~/.bashrc`), and re-run the script until it exits 0.
 
-# 3. Run the interactive installer
-#    --local → laptop / workstation (skips jai, HPC-only skills & hooks)
+# 3. Install the coding-agents CLI itself
+#    `uv tool install .` puts it in an isolated env and puts `coding-agents`
+#    on your PATH via ~/.local/bin. (If this is your first `uv tool` install,
+#    run `uv tool update-shell` afterwards and open a fresh shell.)
+uv tool install .
+
+# 4. Run the interactive installer
 #    default → UMC Utrecht HPC cluster
+#    --local → laptop / workstation (skips jai, HPC-only skills & hooks)
 coding-agents install           # HPC mode
 coding-agents install --local   # local mode
 
-# 4. (HPC) initialize a project directory
+# 5. (HPC) initialize a project directory
 cd /hpc/compgen/projects/my-project/my-subproject
 coding-agents project-init
 
-# 5. Verify
+# 6. Verify
 coding-agents doctor
 
 # Re-sync after config changes
