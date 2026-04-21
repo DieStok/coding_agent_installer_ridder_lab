@@ -181,7 +181,7 @@ Default selection (all checked):
 | **compound-engineering** | [github.com/EveryInc/compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin/tree/main) | `git clone` into `$INSTALL_DIR/skills/` |
 | **scientific-agent-skills** | [github.com/K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) | `git clone` into `$INSTALL_DIR/skills/` |
 | **crawl4ai skill** | [docs.crawl4ai.com/assets/crawl4ai-skill.zip](https://docs.crawl4ai.com/assets/crawl4ai-skill.zip) | Download and extract into `$INSTALL_DIR/skills/` |
-| **hpc-cluster** | Bundled (from uploaded `hpc-cluster.skill`) | Extract into `$INSTALL_DIR/skills/` |
+| **hpc-cluster** | HPC shared path (`/hpc/compgen/projects/ollama/hpc_skill/analysis/dstoker/hpc-cluster.skill`) | Extract `.skill` (zip) into `$INSTALL_DIR/skills/` when `--hpc`; skipped in `--local` |
 
 Skills are symlinked to each agent's native skill location during `sync`:
 - Claude Code: `~/.claude/skills/<name>/SKILL.md` (per [code.claude.com/docs](https://code.claude.com/docs/en/sub-agents))
@@ -415,7 +415,7 @@ $CODING_AGENT_INSTALL_DIR/
 │   ├── compound-engineering/     # git clone from EveryInc
 │   ├── scientific-agent-skills/  # git clone from K-Dense-AI
 │   ├── crawl4ai/                 # Extracted from zip
-│   └── hpc-cluster/              # Extracted from uploaded .skill
+│   └── hpc-cluster/              # HPC mode only — extracted from HPC shared tar.gz
 ├── hooks/                        # Hook implementations (agent-neutral Python)
 │   ├── on_start_agents_md_check.py
 │   ├── on_start_cognitive_reminder.py

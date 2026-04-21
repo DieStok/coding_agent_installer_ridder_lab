@@ -50,7 +50,14 @@ GIT_SKILLS = {
     "scientific-agent-skills": "https://github.com/K-Dense-AI/scientific-agent-skills",
     "autoresearch": "https://github.com/uditgoenka/autoresearch",
 }
-BUNDLED_SKILLS = ["crawl4ai", "hpc-cluster"]
+BUNDLED_SKILLS = ["crawl4ai"]
+
+# Skills fetched from a shared path on the HPC cluster rather than shipped
+# with the package. Only usable when mode == "hpc" and the path is readable
+# from the host running the installer. Maps skill-name -> tar.gz source path.
+HPC_SHARED_SKILLS = {
+    "hpc-cluster": "/hpc/compgen/projects/ollama/hpc_skill/analysis/dstoker/hpc-cluster.skill",
+}
 
 # Canonical default lists — single source of truth.
 # state.py and TUI screens import these rather than defining their own copies.

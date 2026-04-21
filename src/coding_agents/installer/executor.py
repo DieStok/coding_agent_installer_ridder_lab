@@ -22,6 +22,7 @@ from coding_agents.config import (
     BUNDLED_SKILLS,
     GIT_SKILLS,
     HOOK_SCRIPTS,
+    HPC_SHARED_SKILLS,
     mark_installed,
     save_config,
 )
@@ -102,7 +103,7 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
     # --- 3. Install skills ---
     if state.skills:
         log.write("\n[bold]Installing skills...[/bold]")
-        await _install_skills(state.skills, install_dir, bundled, log)
+        await _install_skills(state.skills, install_dir, bundled, log, mode=state.mode)
 
     # --- 4. Copy hooks ---
     if state.hooks:
@@ -426,9 +427,10 @@ def _install_shellcheck(install_dir: Path) -> None:
 
 
 async def _install_skills(
-    skills: list[str], install_dir: Path, bundled: Path, log: RichLog
+    skills: list[str], install_dir: Path, bundled: Path, log: RichLog, *, mode: str = "hpc"
 ) -> None:
-    """Install skills — git clone for external, copy for bundled."""
+    """Install skills — git clone for external, copy for bundled, extract
+    from an HPC shared path for skills in HPC_SHARED_SKILLS."""
     skills_dir = install_dir / "skills"
     dry_run_mkdir(skills_dir)
 
@@ -448,6 +450,31 @@ async def _install_skills(
             except Exception as exc:
                 log.write(f"  [red]✗ {skill}: {exc}[/red]")
 
+        elif skill in HPC_SHARED_SKILLS:
+            if mode != "hpc":
+                log.write(
+                    f"  [dim]Skipping {skill} (only available in HPC mode)[/dim]"
+                )
+                continue
+            src_archive = Path(HPC_SHARED_SKILLS[skill])
+            dest = skills_dir / skill
+            if not src_archive.exists():
+                log.write(
+                    f"  [yellow]HPC-shared skill {skill} not found at {src_archive} — "
+                    "are you on the HPC and is the file readable?[/yellow]"
+                )
+                continue
+            log.write(f"  Fetching {skill} from {src_archive}...")
+            try:
+                if dest.exists():
+                    dry_run_rmtree(dest)
+                await _run_in_thread(
+                    _extract_skill_archive, src_archive, skills_dir, skill
+                )
+                log.write(f"  [green]✓[/green] {skill} (from HPC share)")
+            except Exception as exc:
+                log.write(f"  [red]✗ {skill}: {exc}[/red]")
+
         elif skill in BUNDLED_SKILLS:
             src = bundled / "skills" / skill
             dest = skills_dir / skill
@@ -458,6 +485,42 @@ async def _install_skills(
                 log.write(f"  [green]✓[/green] {skill} (bundled)")
             else:
                 log.write(f"  [yellow]Bundled skill {skill} not found at {src}[/yellow]")
+
+
+def _extract_skill_archive(archive: Path, skills_dir: Path, expected_top: str) -> None:
+    """Extract a ``.skill`` (zip) archive into ``skills_dir``.
+
+    ``.skill`` files are plain zip archives produced by
+    ``scripts/package_skill.py`` (and by Anthropic's skill-creator). The
+    archive must contain a single top-level directory matching
+    ``expected_top``. Members escaping the target (absolute paths or ``..``
+    components) are rejected for safety.
+    """
+    import zipfile
+
+    if is_dry_run():
+        would(
+            "archive",
+            "extract",
+            archive=archive,
+            into=skills_dir,
+            top=expected_top,
+        )
+        return
+
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(str(archive), "r") as zf:
+        for info in zf.infolist():
+            name = info.filename
+            norm = os.path.normpath(name)
+            if norm.startswith("..") or os.path.isabs(norm):
+                raise ValueError(f"Refusing unsafe path in archive: {name}")
+            top = norm.split(os.sep, 1)[0]
+            if top != expected_top:
+                raise ValueError(
+                    f"Archive top-level {top!r} does not match expected {expected_top!r}"
+                )
+        zf.extractall(path=str(skills_dir))
 
 
 async def _install_hooks(

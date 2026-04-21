@@ -77,7 +77,9 @@ coding-agents uninstall
 │   ├── hooks/                  # 5 hook scripts + deny_rules.json
 │   ├── jai/                    # .defaults + 6 agent .conf files
 │   ├── config/                 # AGENTS.md, templates, MCP example
-│   └── skills/                 # crawl4ai, hpc-cluster (bundled skills)
+│   └── skills/                 # crawl4ai (bundled skills)
+├── dist/                       # Distributable artifacts (hpc-cluster.skill)
+├── scripts/                    # Packaging helpers (package_skill.py)
 └── tests/
 ```
 
@@ -116,7 +118,11 @@ Skills are shared across agents via symlinks during `coding-agents sync`:
 - **autoresearch**: Autonomous improvement engine with 10 commands
   (installed from https://github.com/uditgoenka/autoresearch)
 - **crawl4ai**: Web crawling and content extraction (bundled)
-- **hpc-cluster**: UMC Utrecht HPC cluster reference — SLURM, GPUs, storage (bundled)
+- **hpc-cluster**: UMC Utrecht HPC cluster reference — SLURM, GPUs, storage.
+  **Not shipped with the package.** In `--hpc` mode the installer extracts it from
+  `/hpc/compgen/projects/ollama/hpc_skill/analysis/dstoker/hpc-cluster.skill` on the
+  shared filesystem. See `dist/README.md` for how to (re)upload the archive and set
+  world-readable permissions. Skipped entirely in `--local` mode.
 
 ## NFS Safety
 
