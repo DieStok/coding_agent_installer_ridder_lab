@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, Static
 
+from coding_agents.agents import AGENTS
 from coding_agents.detect_existing import GlobalInventory
 from coding_agents.installer.state import InstallerState
 
@@ -42,6 +43,29 @@ class InstallDirScreen(Screen):
         default = self.state.install_dir or _default_dir(self.state.mode)
         with Vertical(id="step-container"):
             yield Label(f"Step 1 of {TOTAL_STEPS} — Installation Directory", classes="step-title")
+
+            # --exclude awareness: show what was excluded via the CLI flag so
+            # the user notices on the very first screen if it's wrong (and
+            # tell them how to fix it without diving into help text).
+            excluded = getattr(self.app, "excluded_agents", set()) or set()
+            if excluded:
+                ex_list = ", ".join(
+                    f"{AGENTS[k]['display_name']} ({k})" if k in AGENTS else k
+                    for k in sorted(excluded)
+                )
+                yield Static(
+                    f"[bold]Excluded by --exclude flag:[/bold] {ex_list}\n"
+                    f"These agents will [bold]not[/bold] be installed, configured, or "
+                    f"wrapped — your existing install (if any) is left untouched.\n"
+                    f"\n"
+                    f"[dim]Wrong? Press [bold]q[/bold] to quit, then re-run with the "
+                    f"correct flag, e.g.:\n"
+                    f"    coding-agents install                        # install everything\n"
+                    f"    coding-agents install --exclude claude       # exclude one agent\n"
+                    f"    coding-agents install --exclude claude,codex # exclude several[/dim]",
+                    classes="banner-warn",
+                    id="exclude-banner",
+                )
 
             if self.inventory and self.inventory.has_existing:
                 existing = self.inventory.existing_agents
