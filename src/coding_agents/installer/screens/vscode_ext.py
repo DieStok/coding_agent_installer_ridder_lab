@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import shutil
 
+from rich.style import Style
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -21,40 +23,51 @@ from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 
-def _ext_links_markup(extensions: list[tuple[str, str]]) -> str:
-    """Render extensions as Rich-markup with clickable links.
+def _ext_links_text(extensions: list[tuple[str, str]]) -> Text:
+    """Build a Rich Text object listing extensions with two clickable URLs each.
 
-    Two URLs per extension, both wrapped in OSC-8 hyperlinks via Rich's
-    [link=...] markup:
-      - vscode:extension/<id>           — opens the extension page directly
-                                          in the user's local VSCode (works
-                                          when the terminal honours custom
-                                          URL schemes; iTerm2, kitty, modern
-                                          gnome-terminal all do).
+    Built via the Style(link=…) API — NOT via markup — so the URL never goes
+    through Textual's markup parser. (Earlier versions used `[link="…"]`
+    markup, but the quotes leaked into the OSC-8 escape and broke link
+    detection in modern terminals. Programmatic Style construction emits a
+    clean OSC-8 sequence: `\\x1b]8;;<URL>\\x1b\\<text>\\x1b]8;;\\x1b\\`.)
+
+    Two URLs per extension:
+      - vscode:extension/<id>           opens the extension page directly in
+                                        the user's local VSCode (terminal
+                                        must register the vscode: handler;
+                                        iTerm2, kitty, modern gnome-terminal
+                                        do this when VSCode is installed
+                                        locally).
       - https://marketplace.visualstudio.com/items?itemName=<id>
-                                        — universal fallback that opens the
-                                          marketplace web page; the page has
-                                          a big green "Install" button that
-                                          launches VSCode locally.
-    """
-    if not extensions:
-        return "[dim]No selected agents publish a VSCode extension.[/dim]"
+                                        universal fallback that opens the
+                                        marketplace web page; that page has
+                                        an "Install" button that launches
+                                        VSCode locally.
 
-    lines: list[str] = []
-    for agent_key, ext_id in extensions:
+    To activate the link inside a Textual TUI, terminal emulators usually
+    require a modifier key (Cmd-click on Mac, Ctrl-click on Linux) so the
+    click event reaches the terminal instead of being consumed by Textual.
+    """
+    text = Text()
+    if not extensions:
+        text.append("No selected agents publish a VSCode extension.", style="dim italic")
+        return text
+
+    for i, (agent_key, ext_id) in enumerate(extensions):
+        if i > 0:
+            text.append("\n")
         marketplace = f"https://marketplace.visualstudio.com/items?itemName={ext_id}"
         vscode_uri = f"vscode:extension/{ext_id}"
-        # URLs are quoted so Textual's markup parser doesn't choke on the
-        # 'vscode:' colon (which it would otherwise read as a markup separator).
-        # Inner [u $accent] gives a visible affordance — the OSC-8 hyperlink
-        # alone renders as plain text in most terminal styles.
-        lines.append(
-            f"  • [bold]{ext_id}[/bold]  [dim]({agent_key})[/dim]\n"
-            f'      [link="{vscode_uri}"][u $accent]Open in VSCode[/u $accent][/link]'
-            f'   [dim]·[/dim]   '
-            f'[link="{marketplace}"][u $accent]Marketplace page[/u $accent][/link]'
-        )
-    return "\n".join(lines)
+
+        text.append("  • ")
+        text.append(ext_id, style="bold")
+        text.append(f"  ({agent_key})\n", style="dim")
+        text.append("      ")
+        text.append("Open in VSCode", style=Style(link=vscode_uri, underline=True, bold=True))
+        text.append("   ·   ", style="dim")
+        text.append("Marketplace page", style=Style(link=marketplace, underline=True, bold=True))
+    return text
 
 
 class VSCodeExtScreen(Screen):
@@ -88,12 +101,20 @@ class VSCodeExtScreen(Screen):
                 )
 
             yield Static("[bold]Recommended extensions:[/bold]", classes="section-heading")
-            yield Static(_ext_links_markup(exts), classes="section-body")
+            yield Static(_ext_links_text(exts), classes="section-body")
 
             if exts:
                 yield Static(
-                    "A copy of this list will be written to [bold]<install_dir>/vscode-extensions.json[/bold] "
-                    "so you can import it later via VSCode's command palette → "
+                    "[dim]Tip: links above are real OSC-8 hyperlinks. To activate "
+                    "them inside this TUI, hold [bold]Cmd[/bold] (Mac) or "
+                    "[bold]Ctrl[/bold] (Linux) and click — that lets the click "
+                    "reach your terminal instead of being captured by the TUI.[/dim]",
+                    classes="muted",
+                )
+                yield Static(
+                    "A copy of this list is also written to "
+                    "[bold]<install_dir>/vscode-extensions.json[/bold] for manual "
+                    "import via VSCode's command palette → "
                     "[italic]Extensions: Install from VSIX/JSON[/italic].",
                     classes="muted",
                 )
