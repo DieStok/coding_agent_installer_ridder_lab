@@ -144,13 +144,8 @@ def _gather_checks(
         "coding-agents install" if not sc.exists() else "",
     ))
 
-    # 8. jai status
-    jai = shutil.which("jai")
-    checks.append((
-        "jai sandbox",
-        "pass" if jai else "warn",
-        "(system admin must install jai)" if not jai else "",
-    ))
+    # 8. Sandbox checks (Apptainer + SIF + secrets/logs dirs) — Phase 2
+    _add_sandbox_checks(checks, config)
 
     # 9. entire status
     if "entire" in config.get("tools", []):
@@ -205,3 +200,109 @@ def _check_node() -> tuple[bool, str]:
         return major >= 18, ver
     except Exception:
         return False, ""
+
+
+def _add_sandbox_checks(checks: list[tuple[str, str, str]], config: dict) -> None:
+    """Append Apptainer + SIF + secrets/logs/creds checks.
+
+    On submit nodes (no $SLURM_JOB_ID), surface an info row prompting the
+    user to re-run inside ``srun --pty`` for the full check set. The SIF
+    version is read via ``apptainer inspect --json`` (sub-second) rather
+    than ``apptainer exec`` (700ms-2s overhead).
+    """
+    import os
+
+    # Apptainer presence
+    apptainer = shutil.which("apptainer")
+    checks.append((
+        "apptainer on PATH",
+        "pass" if apptainer else "warn",
+        "module load apptainer (cluster) or install locally" if not apptainer else "",
+    ))
+
+    # SIF readability
+    sif_path = Path(config.get("sandbox_sif_path", "")).expanduser() if config.get("sandbox_sif_path") else None
+    if sif_path:
+        sif_resolved = sif_path.resolve() if sif_path.exists() else None
+        if sif_resolved and sif_resolved.exists():
+            checks.append(("sandbox SIF readable", "pass", ""))
+            # Try to surface baked versions via `apptainer inspect --json`
+            if apptainer:
+                try:
+                    res = subprocess.run(
+                        [apptainer, "inspect", "--json", str(sif_resolved)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    import json as _json
+                    data = _json.loads(res.stdout) if res.returncode == 0 else {}
+                    labels = data.get("data", {}).get("attributes", {}).get("labels", {})
+                    versions = {k.split(".")[-1]: v for k, v in labels.items() if k.startswith("coding-agents.versions.")}
+                    if versions:
+                        checks.append((
+                            "SIF baked versions",
+                            "pass",
+                            ", ".join(f"{k}={v}" for k, v in sorted(versions.items())),
+                        ))
+                except Exception:
+                    pass
+        else:
+            checks.append((
+                "sandbox SIF readable",
+                "warn",
+                f"not found at {sif_path} (lab admin must build & copy)",
+            ))
+
+    # Secrets dir mode 0700
+    secrets_str = config.get("sandbox_secrets_dir", "")
+    if secrets_str:
+        secrets_dir = Path(secrets_str).expanduser()
+        if secrets_dir.exists():
+            mode = secrets_dir.stat().st_mode & 0o777
+            checks.append((
+                "agent-secrets dir mode 0700",
+                "pass" if mode == 0o700 else "fail",
+                f"chmod 700 {secrets_dir}" if mode != 0o700 else "",
+            ))
+        else:
+            checks.append((
+                "agent-secrets dir exists",
+                "warn",
+                f"missing: {secrets_dir} (re-run install)",
+            ))
+
+    # Logs dir mode 0700
+    logs_str = config.get("sandbox_logs_dir", "")
+    if logs_str:
+        logs_dir = Path(logs_str).expanduser()
+        if logs_dir.exists():
+            mode = logs_dir.stat().st_mode & 0o777
+            checks.append((
+                "agent-logs dir mode 0700",
+                "pass" if mode == 0o700 else "fail",
+                f"chmod 700 {logs_dir}" if mode != 0o700 else "",
+            ))
+        else:
+            checks.append((
+                "agent-logs dir exists",
+                "warn",
+                f"missing: {logs_dir} (re-run install)",
+            ))
+
+    # SLURM context — surface an info-row when run on a submit node
+    in_slurm = "SLURM_JOB_ID" in os.environ
+    if not in_slurm:
+        checks.append((
+            "SLURM context",
+            "warn",
+            "re-run inside `srun --pty` for runtime sandboxing checks",
+        ))
+    else:
+        # Inside a job: verify Claude OAuth credentials mode
+        creds = Path.home() / ".claude" / ".credentials.json"
+        if creds.exists():
+            cmode = creds.stat().st_mode & 0o777
+            checks.append((
+                "claude credentials mode 0600",
+                "pass" if cmode == 0o600 else "warn",
+                f"chmod 600 {creds}" if cmode != 0o600 else "",
+            ))

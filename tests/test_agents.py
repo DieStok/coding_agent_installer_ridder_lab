@@ -8,11 +8,27 @@ def test_all_agents_have_required_fields():
     required = [
         "display_name", "method", "binary", "version_cmd",
         "config_dir", "instruction_file", "hooks_support",
-        "deny_rules_format", "mcp_format", "jai_conf", "jai_env_keys",
+        "deny_rules_format", "mcp_format",
     ]
     for key, agent in AGENTS.items():
         for field in required:
             assert field in agent, f"Agent {key} missing field {field}"
+
+
+def test_no_jai_keys_remain():
+    """JAI is hard-deleted in MVP; no agent should carry jai_conf/jai_env_keys."""
+    from coding_agents.agents import AGENTS
+
+    for key, agent in AGENTS.items():
+        assert "jai_conf" not in agent, f"Agent {key} still has jai_conf"
+        assert "jai_env_keys" not in agent, f"Agent {key} still has jai_env_keys"
+
+
+def test_opencode_package_name_corrected():
+    """OpenCode's npm package is `opencode-ai`, not `opencode` (404 on npm)."""
+    from coding_agents.agents import AGENTS
+
+    assert AGENTS["opencode"]["package"] == "opencode-ai"
 
 
 def test_six_agents():

@@ -38,8 +38,6 @@ def run_sync() -> None:
     _sync_hooks(install_dir, agents, config.get("hooks", []))
     _sync_deny_rules(install_dir, agents)
     _sync_mcp(install_dir, agents)
-    if config.get("jai_enabled") and mode != "local":
-        _sync_jai(install_dir, agents, home)
 
     console.print("\n[green bold]Sync complete.[/green bold]")
 
@@ -208,25 +206,3 @@ def _sync_mcp(install_dir: Path, agents: list[str]) -> None:
         console.print("  [dim]No MCP servers defined[/dim]")
 
 
-def _sync_jai(install_dir: Path, agents: list[str], home: Path) -> None:
-    """Symlink jai configs to ~/.jai/."""
-    console.print("[bold]jai configs:[/bold]")
-    jai_src = install_dir / "jai"
-    jai_dest = home / ".jai"
-    jai_dest.mkdir(parents=True, exist_ok=True)
-
-    # Symlink .defaults
-    defaults_src = jai_src / ".defaults"
-    if defaults_src.exists():
-        safe_symlink(defaults_src, jai_dest / ".defaults")
-        console.print("  [green]✓[/green] .defaults")
-
-    for key in agents:
-        agent = AGENTS.get(key)
-        if not agent:
-            continue
-        conf = agent["jai_conf"]
-        src = jai_src / conf
-        if src.exists():
-            safe_symlink(src, jai_dest / conf)
-            console.print(f"  [green]✓[/green] {conf}")

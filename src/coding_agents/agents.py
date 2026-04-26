@@ -20,8 +20,6 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": "claude",
         "mcp_format": "claude",
         "vscode_extension": "anthropic.claude-code",
-        "jai_conf": "claude.conf",
-        "jai_env_keys": ["ANTHROPIC_API_KEY"],
     },
     "codex": {
         "display_name": "Codex CLI",
@@ -33,16 +31,14 @@ AGENTS: dict[str, dict] = {
         "instruction_file": "AGENTS.md",
         "skills_dir": "~/.codex/skills/{name}/SKILL.md",
         "hooks_support": "experimental",
-        "deny_rules_format": "starlark",
+        "deny_rules_format": "codex_toml",
         "mcp_format": "codex",
         "vscode_extension": "openai.chatgpt",
-        "jai_conf": "codex.conf",
-        "jai_env_keys": ["OPENAI_API_KEY", "CODEX_API_KEY"],
     },
     "opencode": {
         "display_name": "OpenCode",
         "method": "npm",
-        "package": "opencode",
+        "package": "opencode-ai",
         "binary": "opencode",
         "version_cmd": ["opencode", "--version"],
         "config_dir": "~/.config/opencode",
@@ -52,8 +48,6 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": "opencode",
         "mcp_format": "opencode",
         "vscode_extension": "sst-dev.opencode",
-        "jai_conf": "opencode.conf",
-        "jai_env_keys": [],
     },
     "pi": {
         "display_name": "Pi",
@@ -68,8 +62,6 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": None,
         "mcp_format": "pi",
         "vscode_extension": "pi0.pi-vscode",
-        "jai_conf": "pi.conf",
-        "jai_env_keys": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"],
         "post_install": ["pi install npm:pi-ask-user", "pi install npm:pi-subagents"],
     },
     "gemini": {
@@ -85,8 +77,6 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": None,
         "mcp_format": "gemini",
         "vscode_extension": None,
-        "jai_conf": "gemini.conf",
-        "jai_env_keys": ["GOOGLE_API_KEY"],
     },
     "amp": {
         "display_name": "Amp",
@@ -101,8 +91,6 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": None,
         "mcp_format": "amp",
         "vscode_extension": None,
-        "jai_conf": "amp.conf",
-        "jai_env_keys": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
     },
 }
 

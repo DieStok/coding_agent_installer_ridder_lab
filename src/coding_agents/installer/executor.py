@@ -79,7 +79,7 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
     # Create directory structure
     log.write("\n[bold]Creating directory structure...[/bold]")
     for subdir in ["bin", "config", "config/mcp", "config/templates", "hooks",
-                    "jai", "skills", "tools", "tools/bin", "logs", "node_modules"]:
+                    "skills", "tools", "tools/bin", "logs", "node_modules"]:
         dry_run_mkdir(install_dir / subdir)
 
     bundled = _bundled_dir()
@@ -110,12 +110,10 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
         log.write("\n[bold]Installing hooks...[/bold]")
         await _install_hooks(state.hooks, install_dir, bundled, log)
 
-    # --- 5. Copy jai configs (HPC only) ---
-    if state.jai_enabled and state.mode != "local":
-        log.write("\n[bold]Preparing jai sandbox configs...[/bold]")
-        await _install_jai(state.agents, install_dir, bundled, log)
-    elif state.mode == "local":
-        log.write("\n[dim]Skipping jai sandbox (local mode)[/dim]")
+    # --- 5. Bootstrap per-user sandbox dirs (HPC only) ---
+    if state.mode != "local":
+        log.write("\n[bold]Bootstrapping per-user sandbox dirs...[/bold]")
+        await _bootstrap_user_dirs(state, log)
 
     # --- 6. Copy config files (mode-aware AGENTS.md) ---
     log.write("\n[bold]Copying configuration files...[/bold]")
@@ -126,14 +124,21 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
         log.write("\n[bold]Installing VSCode extensions...[/bold]")
         await _install_vscode_extensions(state.agents, install_dir, log)
 
-    # --- 8. Create jai wrapper scripts (HPC only) ---
+    # --- 8. Create sandbox wrapper scripts (HPC only) ---
     if state.mode != "local":
-        log.write("\n[bold]Creating jai wrapper scripts...[/bold]")
-        await _create_jai_wrappers(state.agents, install_dir, log)
+        log.write("\n[bold]Creating sandbox wrapper scripts...[/bold]")
+        await _create_sandbox_wrappers(state, install_dir, log)
 
     # --- 9. Shell integration ---
     log.write("\n[bold]Setting up shell integration...[/bold]")
-    modified = await _run_in_thread(inject_shell_block, install_dir)
+    modified = await _run_in_thread(
+        lambda: inject_shell_block(
+            install_dir,
+            sandbox_sif_path=state.sandbox_sif_path if state.mode != "local" else "",
+            sandbox_secrets_dir=state.sandbox_secrets_dir if state.mode != "local" else "",
+            sandbox_logs_dir=state.sandbox_logs_dir if state.mode != "local" else "",
+        )
+    )
     for f in modified:
         log.write(f"  [green]✓[/green] Updated {f}")
 
@@ -549,28 +554,6 @@ async def _install_hooks(
         log.write("  [green]✓[/green] deny_rules.json")
 
 
-async def _install_jai(
-    agents: list[str], install_dir: Path, bundled: Path, log: RichLog
-) -> None:
-    """Copy jai config files."""
-    jai_dir = install_dir / "jai"
-    dry_run_mkdir(jai_dir)
-
-    # Copy .defaults
-    defaults_src = bundled / "jai" / ".defaults"
-    if defaults_src.exists():
-        dry_run_copy(defaults_src, jai_dir / ".defaults")
-        log.write("  [green]✓[/green] .defaults")
-
-    # Copy per-agent configs
-    for agent_key in agents:
-        conf_name = AGENTS[agent_key]["jai_conf"]
-        src = bundled / "jai" / conf_name
-        if src.exists():
-            dry_run_copy(src, jai_dir / conf_name)
-            log.write(f"  [green]✓[/green] {conf_name}")
-
-
 async def _install_config(
     install_dir: Path, bundled: Path, log: RichLog, *, mode: str = "hpc"
 ) -> None:
@@ -630,27 +613,89 @@ async def _install_vscode_extensions(
         log.write("  [yellow]`code` not on PATH — writing extensions.json for manual install[/yellow]")
 
 
-async def _create_jai_wrappers(agents: list[str], install_dir: Path, log: RichLog) -> None:
-    """Create jai-<agent> wrapper scripts in bin/."""
+async def _create_sandbox_wrappers(state, install_dir: Path, log: RichLog) -> None:
+    """Create agent-<key> Apptainer sandbox wrapper scripts in bin/.
+
+    Renders bundled/templates/wrapper/agent.template.sh per agent. The
+    template's variable list is pinned in sandbox_wrappers.WRAPPER_VARS;
+    drift between the template and the renderer is detected by tests.
+    """
+    from coding_agents.installer.sandbox_wrappers import (
+        load_template,
+        render_wrapper,
+    )
+
     bin_dir = install_dir / "bin"
     dry_run_mkdir(bin_dir)
 
-    for agent_key in agents:
+    template = load_template()
+    # Sort for deterministic / idempotent generation order.
+    for agent_key in sorted(state.agents):
         agent = AGENTS[agent_key]
-        wrapper_name = f"jai-{agent_key}"
+        wrapper_name = f"agent-{agent_key}"
         wrapper_path = bin_dir / wrapper_name
-        binary = agent["binary"]
-        jai_conf = agent["jai_conf"]
-
-        script = f"""#!/usr/bin/env bash
-# jai wrapper for {agent['display_name']}
-# Falls back to running without sandbox if jai is not available.
-if command -v jai &>/dev/null; then
-    exec jai -c "$JAI_CONFIG_DIR/{jai_conf}" -- {binary} "$@"
-else
-    echo "⚠️  jai not available — running {binary} without sandbox" >&2
-    exec {binary} "$@"
-fi
-"""
+        script = render_wrapper(
+            template,
+            agent_key=agent_key,
+            agent_display_name=agent["display_name"],
+            agent_binary=agent["binary"],
+            default_sif_path=state.sandbox_sif_path,
+        )
         dry_run_write_text(wrapper_path, script, mode=0o755)
         log.write(f"  [green]✓[/green] {wrapper_name}")
+
+
+async def _bootstrap_user_dirs(state, log: RichLog) -> None:
+    """Create per-user agent-secrets/ and agent-logs/ dirs (mode 0700) and
+    write the SIF sha256 sidecar.
+
+    Resolves $USER into sandbox_secrets_dir/sandbox_logs_dir if blank.
+    Computes ${SIF_REAL}.sha256 sidecar so the wrapper hot path skips
+    hashing per invocation (perf-oracle finding).
+    """
+    import getpass
+    import hashlib
+
+    user = getpass.getuser()
+    if not state.sandbox_secrets_dir:
+        state.sandbox_secrets_dir = f"/hpc/compgen/users/{user}/agent-secrets"
+    if not state.sandbox_logs_dir:
+        state.sandbox_logs_dir = f"/hpc/compgen/users/{user}/agent-logs"
+
+    for label, p in (
+        ("secrets", state.sandbox_secrets_path),
+        ("logs", state.sandbox_logs_path),
+    ):
+        try:
+            dry_run_mkdir(p, mode=0o700)
+            log.write(f"  [green]✓[/green] agent-{label} dir: {p}")
+        except OSError as exc:
+            log.write(
+                f"  [yellow]⚠ agent-{label} dir {p}: {exc} "
+                f"(parent must exist; ask hpcsupport if not)[/yellow]"
+            )
+
+    # SIF sha256 sidecar (cached at install; wrapper reads in <1ms)
+    sif_p = state.sandbox_sif_path_p
+    if sif_p.exists():
+        from coding_agents.dry_run import is_dry_run, would
+        sif_real = sif_p.resolve()
+        sidecar = sif_real.with_suffix(sif_real.suffix + ".sha256")
+        if is_dry_run():
+            would("sif_sha", "sha256_sidecar", path=sidecar, source=sif_real)
+        else:
+            try:
+                digest = hashlib.sha256(sif_real.read_bytes()).hexdigest()
+                sidecar.write_text(digest + "\n")
+                sidecar.chmod(0o644)
+                log.write(f"  [green]✓[/green] SIF sha256 sidecar: {sidecar.name}")
+            except (OSError, PermissionError) as exc:
+                log.write(
+                    f"  [yellow]⚠ Could not write SIF sha sidecar to {sidecar}: "
+                    f"{exc}[/yellow]"
+                )
+    else:
+        log.write(
+            f"  [yellow]⚠ SIF not yet readable at {sif_p} "
+            "(lab admin must build & copy; doctor will verify later)[/yellow]"
+        )

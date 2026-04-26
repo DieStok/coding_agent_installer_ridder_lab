@@ -114,10 +114,19 @@ def scan_existing() -> GlobalInventory:
     home = Path.home()
     globals_to_check = {
         str(home / ".mcp.json"): (home / ".mcp.json").exists(),
-        str(home / ".jai"): (home / ".jai").exists(),
         str(home / ".coding-agents.json"): (home / ".coding-agents.json").exists(),
     }
     inventory.global_files = globals_to_check
+
+    # One-shot warning if old JAI install detected (resolves OQ5 from
+    # supplement). MVP does not auto-convert; user removes manually.
+    jai_dir = home / ".jai"
+    jai_shims = list((home / ".local" / "bin").glob("jai-*")) if (home / ".local" / "bin").exists() else []
+    if jai_dir.exists() or jai_shims:
+        _log.warning(
+            "Detected old JAI install. Remove ~/.jai/ and ~/.local/bin/jai-* "
+            "manually before re-running install (auto-conversion is v2)."
+        )
 
     return inventory
 

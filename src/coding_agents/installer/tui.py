@@ -50,7 +50,9 @@ class CodingAgentsInstaller(App):
         # Apply mode
         self.state.mode = mode
         if mode == "local":
-            self.state.jai_enabled = False
+            # MVP: --local mode is deferred to v2 (bubblewrap fallback). The
+            # TUI still loads but the executor's wrapper-creation step is
+            # skipped (mode != "local" guard in execute_install).
             self.state.skills = [s for s in self.state.skills if s not in HPC_ONLY_SKILLS]
             self.state.hooks = [h for h in self.state.hooks if h not in HPC_ONLY_HOOKS]
 

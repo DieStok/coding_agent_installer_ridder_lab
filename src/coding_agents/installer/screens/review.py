@@ -29,12 +29,17 @@ class ReviewScreen(Screen):
         exts = agents_with_vscode_ext(s.agents)
         ext_str = ", ".join(ext_id for _, ext_id in exts) if exts and s.vscode_extensions else "none"
 
+        sandbox_str = (
+            f"Apptainer (SIF: {s.sandbox_sif_path})"
+            if s.mode != "local"
+            else "none (local mode)"
+        )
         summary = (
             f"[bold]Installation Directory:[/bold] {s.install_dir}\n"
             f"[bold]Agents:[/bold] {agents_str}\n"
             f"[bold]VSCode Extensions:[/bold] {ext_str}\n"
             f"[bold]Tools:[/bold] {tools_str}\n"
-            f"[bold]jai Sandbox:[/bold] {'yes' if s.jai_enabled else 'no'}\n"
+            f"[bold]Sandbox:[/bold] {sandbox_str}\n"
             f"[bold]Skills:[/bold] {skills_str}\n"
             f"[bold]Hooks:[/bold] {hooks_str}\n"
         )

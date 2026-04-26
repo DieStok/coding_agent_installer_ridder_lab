@@ -214,21 +214,53 @@ def uv_pip_install(venv_path: Path, packages: list[str], *, upgrade: bool = Fals
 SHELL_MARKERS = ("# >>> coding-agents >>>", "# <<< coding-agents <<<")
 
 
-def inject_shell_block(install_dir: Path) -> list[Path]:
-    """Add PATH/env block to ~/.bashrc and ~/.zshrc (if zsh). Returns modified files."""
-    log.debug("inject_shell_block: install_dir=%s", install_dir)
+def render_shell_block(
+    install_dir: Path,
+    *,
+    sandbox_sif_path: str = "",
+    sandbox_secrets_dir: str = "",
+    sandbox_logs_dir: str = "",
+) -> str:
+    """Pure function: build the rc-file shell block.
+
+    Extracted so the rendering logic is unit-testable without touching
+    ~/.zshrc. ``inject_shell_block`` is the I/O wrapper that calls this.
+    """
     path_str = str(install_dir)
-    # Security check runs BEFORE the dry-run short-circuit so dry-run never
-    # masks a bad configuration.
     if not _SAFE_PATH_RE.match(path_str):
         raise ValueError(f"Install path contains unsafe characters: {path_str}")
     quoted = shlex.quote(path_str)
-    block = f"""{SHELL_MARKERS[0]}
-export CODING_AGENT_INSTALL_DIR={quoted}
-export PATH="$CODING_AGENT_INSTALL_DIR/bin:$CODING_AGENT_INSTALL_DIR/node_modules/.bin:$PATH"
-export CODING_AGENTS_TOOLS_VENV="$CODING_AGENT_INSTALL_DIR/tools/.venv"
-export JAI_CONFIG_DIR="$CODING_AGENT_INSTALL_DIR/jai"
-{SHELL_MARKERS[1]}"""
+    lines = [
+        SHELL_MARKERS[0],
+        f"export CODING_AGENT_INSTALL_DIR={quoted}",
+        'export PATH="$CODING_AGENT_INSTALL_DIR/bin:$CODING_AGENT_INSTALL_DIR/node_modules/.bin:$PATH"',
+        'export CODING_AGENTS_TOOLS_VENV="$CODING_AGENT_INSTALL_DIR/tools/.venv"',
+    ]
+    if sandbox_sif_path:
+        lines.append(f"export AGENT_SIF={shlex.quote(sandbox_sif_path)}")
+    if sandbox_secrets_dir:
+        lines.append(f"export AGENT_SECRETS_DIR={shlex.quote(sandbox_secrets_dir)}")
+    if sandbox_logs_dir:
+        lines.append(f"export AGENT_LOGS_DIR={shlex.quote(sandbox_logs_dir)}")
+    lines.append(SHELL_MARKERS[1])
+    return "\n".join(lines)
+
+
+def inject_shell_block(
+    install_dir: Path,
+    *,
+    sandbox_sif_path: str = "",
+    sandbox_secrets_dir: str = "",
+    sandbox_logs_dir: str = "",
+) -> list[Path]:
+    """Add PATH/env block to ~/.bashrc and ~/.zshrc (if zsh). Returns modified files."""
+    log.debug("inject_shell_block: install_dir=%s", install_dir)
+    block = render_shell_block(
+        install_dir,
+        sandbox_sif_path=sandbox_sif_path,
+        sandbox_secrets_dir=sandbox_secrets_dir,
+        sandbox_logs_dir=sandbox_logs_dir,
+    )
 
     rc_files = [Path.home() / ".bashrc"]
     shell = os.environ.get("SHELL", "")

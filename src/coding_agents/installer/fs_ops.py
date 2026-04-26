@@ -17,12 +17,27 @@ from pathlib import Path
 from coding_agents.dry_run import content_fingerprint, is_dry_run, would
 
 
-def dry_run_mkdir(path: Path, *, parents: bool = True, exist_ok: bool = True) -> None:
-    """``Path.mkdir`` with dry-run support."""
+def dry_run_mkdir(
+    path: Path,
+    *,
+    parents: bool = True,
+    exist_ok: bool = True,
+    mode: int | None = None,
+) -> None:
+    """``Path.mkdir`` (optionally followed by ``chmod``) with dry-run support."""
     if is_dry_run():
-        would("mkdir", "create_dir", path=path, parents=parents, exist_ok=exist_ok)
+        would(
+            "mkdir",
+            "create_dir",
+            path=path,
+            parents=parents,
+            exist_ok=exist_ok,
+            mode=oct(mode) if mode is not None else None,
+        )
         return
     path.mkdir(parents=parents, exist_ok=exist_ok)
+    if mode is not None:
+        path.chmod(mode)
 
 
 def dry_run_copy(src: Path, dst: Path) -> None:

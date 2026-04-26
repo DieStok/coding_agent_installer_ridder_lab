@@ -52,6 +52,8 @@ class ToolsScreen(Screen):
         elif event.button.id == "btn-next":
             tools_list = self.query_one("#tools-list", SelectionList)
             self.state.tools = list(tools_list.selected)
-            from coding_agents.installer.screens.jai_config import JaiConfigScreen
+            # Phase 1: skip the (deferred) SandboxConfigScreen and use
+            # config.py defaults silently. Phase 3 lands the new screen.
+            from coding_agents.installer.screens.skills_hooks import SkillsHooksScreen
 
-            self.app.push_screen(JaiConfigScreen(self.state))
+            self.app.push_screen(SkillsHooksScreen(self.state))

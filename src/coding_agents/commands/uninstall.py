@@ -51,12 +51,12 @@ def run_uninstall() -> None:
                         dry_run_unlink(item)
                         console.print(f"  [green]✓[/green] Removed skill symlink {item}")
 
-    # 2. Remove jai symlinks
-    console.print("[bold]Removing jai symlinks...[/bold]")
-    jai_dir = home / ".jai"
-    if jai_dir.exists():
-        for item in jai_dir.iterdir():
-            if item.is_symlink() and str(install_dir) in str(item.resolve()):
+    # 2. Remove agent-* sandbox wrapper shims
+    console.print("[bold]Removing agent-* sandbox wrappers...[/bold]")
+    bin_dir = install_dir / "bin"
+    if bin_dir.exists():
+        for item in bin_dir.iterdir():
+            if item.name.startswith("agent-") and item.is_file():
                 dry_run_unlink(item)
                 console.print(f"  [green]✓[/green] Removed {item}")
 

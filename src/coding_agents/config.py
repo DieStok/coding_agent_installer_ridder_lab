@@ -6,10 +6,32 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 log = logging.getLogger("coding-agents")
 
 CONFIG_PATH = Path.home() / ".coding-agents.json"
+
+# Sandbox engine — Literal until v2 introduces a second backend (bubblewrap).
+SandboxMode = Literal["apptainer"]
+SANDBOX_MODE: SandboxMode = "apptainer"
+
+# Default Apptainer SIF path on the lab-shared filesystem. Lab admin builds
+# the SIF and atomically symlinks `current.sif` -> a dated build.
+DEFAULT_SANDBOX_SIF_PATH = "/hpc/compgen/users/shared/agent/current.sif"
+
+# SLURM submission defaults — TUI display + sbatch template only.
+# The wrapper itself never reads these.
+DEFAULT_SLURM_DEFAULTS: dict[str, object] = {
+    "wall_time": "08:00:00",
+    "mem": "5G",
+    "tmpspace": "5G",
+    "cpus": 2,
+    # Explicit allowlist resolves the M5/M10 SpecFlow contradiction:
+    # --export=NONE strips conda env; this allowlist preserves SLURM
+    # hygiene while letting `conda activate` reach the compute node.
+    "export_allowlist": "PATH,VIRTUAL_ENV,CONDA_PREFIX,CONDA_DEFAULT_ENV,LD_LIBRARY_PATH,HOME,USER,TERM,LANG,LC_ALL",
+}
 
 DEFAULT_CONFIG = {
     "install_dir": "",
@@ -30,9 +52,12 @@ DEFAULT_CONFIG = {
     ],
     "tools": ["crawl4ai", "agent-browser", "linters", "entire"],
     "vscode_extensions": True,
-    "jai_enabled": True,
     "mode": "hpc",
     "installed_at": "",
+    "sandbox_sif_path": DEFAULT_SANDBOX_SIF_PATH,
+    "sandbox_secrets_dir": "",
+    "sandbox_logs_dir": "",
+    "slurm_defaults": dict(DEFAULT_SLURM_DEFAULTS),
 }
 
 # Map hook short names to script filenames

@@ -491,7 +491,6 @@ def test_execute_install_in_dry_run_touches_nothing(
         tools=[],
         skills=[],
         hooks=[],
-        jai_enabled=False,
         vscode_extensions=False,
     )
 
