@@ -66,8 +66,15 @@ def run(
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
     capture: bool = True,
+    stdin_devnull: bool = True,
 ) -> subprocess.CompletedProcess:
-    """Run a command with NFS retry on errno 116 (stale file handle)."""
+    """Run a command with NFS retry on errno 116 (stale file handle).
+
+    `stdin_devnull` defaults to True so installer scripts that try to read
+    from stdin (e.g. `curl … | bash` running an interactive prompt) can't
+    silently hang the TUI. Pass False if the caller actually needs to feed
+    stdin.
+    """
     log.debug("run: cmd=%s cwd=%s timeout=%d", cmd, cwd, timeout)
     if is_dry_run():
         would(
@@ -91,6 +98,8 @@ def run(
     if capture:
         kwargs["capture_output"] = True
         kwargs["text"] = True
+    if stdin_devnull:
+        kwargs["stdin"] = subprocess.DEVNULL
 
     for attempt in range(2):
         try:
@@ -160,7 +169,13 @@ def safe_symlink(source: Path, target: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def npm_install(prefix: Path, package: str) -> subprocess.CompletedProcess:
-    """Install an npm package with NFS-safe flags."""
+    """Install an npm package with NFS-safe flags.
+
+    Note: we deliberately keep optionalDependencies enabled — many modern CLIs
+    (OpenCode, esbuild, biome, ...) ship per-platform native binaries via
+    `optionalDependencies` and `--no-optional` strips them, leaving a broken
+    install with exit 1.
+    """
     log.debug("npm_install: package=%s prefix=%s", package, prefix)
     cache_dir = prefix / ".npm-cache"
     if is_dry_run():
@@ -172,7 +187,6 @@ def npm_install(prefix: Path, package: str) -> subprocess.CompletedProcess:
             "npm", "install",
             "--prefix", str(prefix),
             "--no-package-lock",
-            "--no-optional",
             "--cache", str(cache_dir),
             package,
         ],

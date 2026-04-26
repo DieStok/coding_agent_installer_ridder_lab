@@ -269,13 +269,24 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
         if key == "claude":
             await _install_claude_statusbar(log)
 
-    # Post-install actions (e.g., Pi extensions)
+    # Post-install actions (e.g., Pi extensions). The agent binary lives at
+    # <install_dir>/node_modules/.bin/<binary> after npm install — it isn't
+    # on PATH yet, so we resolve the absolute path and substitute it in. We
+    # also log the actual error if the post-install fails (previously a
+    # bare 'except' silently swallowed the reason).
     for cmd_str in agent.get("post_install", []):
         try:
-            await _run_in_thread(run, shlex.split(cmd_str), check=False)
+            argv = shlex.split(cmd_str)
+            if argv and method == "npm":
+                bin_path = install_dir / "node_modules" / ".bin" / argv[0]
+                if bin_path.exists():
+                    argv[0] = str(bin_path)
+            await _run_in_thread(run, argv, check=False)
             log.write(f"    [dim]post-install: {cmd_str}[/dim]")
-        except Exception:
-            log.write(f"    [yellow]post-install skipped: {cmd_str}[/yellow]")
+        except Exception as exc:
+            log.write(
+                f"    [yellow]post-install skipped: {cmd_str} ({exc})[/yellow]"
+            )
 
 
 async def _install_claude_statusbar(log: RichLog) -> None:
@@ -370,19 +381,41 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
             log.write(f"  [red]✗ agent-browser: {exc}[/red]")
 
     if "entire" in tools:
+        # Reference: https://github.com/entireio/cli — installer is a
+        # `curl … | bash` script that occasionally prompts; we close stdin
+        # via run(stdin_devnull=True) (default) and cap the timeout at 90s
+        # so a prompt or network hiccup can't freeze the TUI for 5 minutes.
         log.write("  Installing entire CLI...")
         try:
-            await _run_in_thread(
+            result = await _run_in_thread(
                 run,
                 ["bash", "-c", "curl -fsSL https://entire.io/install.sh | bash"],
                 check=False,
+                timeout=90,
             )
-            # Disable telemetry
+            if result.returncode != 0:
+                stderr = (getattr(result, "stderr", "") or "").strip().splitlines()[-3:]
+                log.write(
+                    f"  [yellow]entire installer exit {result.returncode}: "
+                    f"{' / '.join(stderr) or 'no stderr'}[/yellow]"
+                )
             entire_bin = shutil.which("entire")
             if entire_bin:
-                await _run_in_thread(run, ["entire", "enable", "--telemetry=false"], check=False)
+                await _run_in_thread(
+                    run,
+                    ["entire", "enable", "--telemetry=false"],
+                    check=False,
+                    timeout=30,
+                )
                 safe_symlink(Path(entire_bin), install_dir / "bin" / "entire")
-            log.write("  [green]✓[/green] entire CLI installed")
+                log.write("  [green]✓[/green] entire CLI installed")
+            else:
+                log.write(
+                    "  [yellow]entire: install script ran but `entire` not on PATH; "
+                    "skipping symlink. Install manually if you need it.[/yellow]"
+                )
+        except subprocess.TimeoutExpired:
+            log.write("  [yellow]entire: install timed out (90s) — skipping[/yellow]")
         except Exception as exc:
             log.write(f"  [yellow]entire: {exc}[/yellow]")
 
@@ -418,7 +451,29 @@ def _install_shellcheck(install_dir: Path) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         archive = Path(tmpdir) / "shellcheck.tar.xz"
-        urllib.request.urlretrieve(url, str(archive))
+        # HPC nodes commonly have a non-default CA bundle (RHEL ships its
+        # bundle at /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem and
+        # the system Python doesn't always pick it up from $SSL_CERT_FILE
+        # when it built without certifi). Build an explicit SSL context
+        # that consults SSL_CERT_FILE → SSL_CERT_DIR → the well-known
+        # RHEL/CentOS bundle, in that order.
+        import ssl
+
+        cafile = os.environ.get("SSL_CERT_FILE")
+        capath = os.environ.get("SSL_CERT_DIR")
+        if not cafile and not capath:
+            for candidate in (
+                "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  # RHEL/Rocky
+                "/etc/ssl/certs/ca-certificates.crt",                 # Debian/Ubuntu
+                "/etc/ssl/cert.pem",                                  # OpenSSL default
+            ):
+                if Path(candidate).exists():
+                    cafile = candidate
+                    break
+        ctx = ssl.create_default_context(cafile=cafile, capath=capath)
+        with urllib.request.urlopen(url, context=ctx, timeout=120) as resp, \
+                open(archive, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
 
         with tarfile.open(str(archive), "r:xz") as tar:
             # Extract shellcheck binary — reject symlinks/hardlinks for safety
