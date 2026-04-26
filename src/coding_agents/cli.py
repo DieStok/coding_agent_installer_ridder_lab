@@ -66,9 +66,29 @@ def main(
 @app.command()
 def install(
     local: bool = typer.Option(False, "--local", help="Install for local Mac/Linux instead of HPC cluster."),
+    exclude: str = typer.Option(
+        "",
+        "--exclude",
+        help=(
+            "Comma-separated list of agents to skip entirely (no install_cmd, no wrapper, "
+            "no agent-specific managed-settings emit). Example: --exclude claude,codex. "
+            "Useful when developing this installer against your own working agent install."
+        ),
+    ),
 ) -> None:
     """Interactive TUI installer for coding agents."""
     import sys
+
+    # Validate --exclude FIRST so scripted callers get the right error message.
+    excluded = {a.strip() for a in exclude.split(",") if a.strip()}
+    if excluded:
+        from coding_agents.agents import AGENTS
+        unknown = excluded - set(AGENTS.keys())
+        if unknown:
+            console.print(f"[red]Error:[/red] unknown agent(s) in --exclude: {sorted(unknown)}")
+            console.print(f"Known agents: {sorted(AGENTS.keys())}")
+            raise typer.Exit(2)
+        console.print(f"[yellow]Excluding agents from install:[/yellow] {sorted(excluded)}")
 
     if not sys.stdin.isatty():
         console.print("[red]Error:[/red] coding-agents install requires an interactive terminal.")
@@ -77,7 +97,7 @@ def install(
     from coding_agents.installer.tui import CodingAgentsInstaller
 
     mode = "local" if local else "hpc"
-    tui = CodingAgentsInstaller(mode=mode)
+    tui = CodingAgentsInstaller(mode=mode, excluded_agents=excluded)
     tui.run()
 
 

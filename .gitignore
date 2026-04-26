@@ -43,3 +43,9 @@ logs/
 
 # Node (install targets; not relevant here but harmless)
 node_modules/
+
+# Built SIF artifacts (large; ship via /hpc/compgen/users/shared/agent/, not git)
+coding_agent_hpc.sif
+coding_agent_hpc.sif.sha256
+*.sif
+*.sif.sha256

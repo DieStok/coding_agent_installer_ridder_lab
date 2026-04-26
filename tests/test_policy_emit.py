@@ -84,6 +84,56 @@ def test_deny_rules_covers_security_critical_paths():
     assert "Read(./build)" not in deny
 
 
+def test_install_managed_claude_settings_dry_run_writes_nothing(tmp_path):
+    """Dry-run gap fix: policy emit must not touch disk in dry-run."""
+    from coding_agents.dry_run import set_dry_run
+    from coding_agents.installer.policy_emit import install_managed_claude_settings
+
+    template_path = Path(__file__).resolve().parent.parent / "src" / "coding_agents" / "bundled" / "templates" / "managed-claude-settings.json"
+    deny_rules_path = Path(__file__).resolve().parent.parent / "src" / "coding_agents" / "bundled" / "hooks" / "deny_rules.json"
+    target = tmp_path / "claude" / "settings.json"
+
+    # Pre-existing target with different content (would trigger backup)
+    target.parent.mkdir()
+    target.write_text('{"old": true}\n')
+    target_mtime_before = target.stat().st_mtime
+    backup_glob = list(target.parent.glob("*.backup-*"))
+    assert backup_glob == []
+
+    set_dry_run(True)
+    try:
+        install_managed_claude_settings(template_path, deny_rules_path, target)
+    finally:
+        set_dry_run(False)
+
+    # Target file content unchanged + no backup created
+    assert target.read_text() == '{"old": true}\n'
+    assert target.stat().st_mtime == target_mtime_before
+    assert list(target.parent.glob("*.backup-*")) == []
+
+
+def test_install_codex_deny_paths_dry_run_writes_nothing(tmp_path):
+    """Same gap for codex TOML emit."""
+    from coding_agents.dry_run import set_dry_run
+    from coding_agents.installer.policy_emit import install_codex_deny_paths
+
+    deny_rules_path = Path(__file__).resolve().parent.parent / "src" / "coding_agents" / "bundled" / "hooks" / "deny_rules.json"
+    target = tmp_path / "codex" / "config.toml"
+    target.parent.mkdir()
+    target.write_text('model = "gpt-4"\n')
+    target_mtime_before = target.stat().st_mtime
+
+    set_dry_run(True)
+    try:
+        install_codex_deny_paths(deny_rules_path, target)
+    finally:
+        set_dry_run(False)
+
+    assert target.read_text() == 'model = "gpt-4"\n'
+    assert target.stat().st_mtime == target_mtime_before
+    assert list(target.parent.glob("*.backup-*")) == []
+
+
 def test_deny_rules_codex_paths_match_claude():
     """Single source of truth — Codex toml deny_paths should mirror the
     Claude deny set (modulo formatting)."""

@@ -30,13 +30,21 @@ def _today_suffix() -> str:
 
 def _backup_if_drifted(path: Path, new_content: str) -> Path | None:
     """If ``path`` exists and content differs from ``new_content``, copy it
-    to ``path.with_suffix(f".backup-{today}{path.suffix}")``. Idempotent."""
+    to ``path.with_suffix(f".backup-{today}{path.suffix}")``. Idempotent.
+
+    Honors dry-run: in dry-run, logs the would-be backup instead of writing.
+    """
+    from coding_agents.dry_run import is_dry_run, would
+
     if not path.exists():
         return None
     existing = path.read_text()
     if existing == new_content:
         return None
     backup = path.with_name(f"{path.stem}.backup-{_today_suffix()}{path.suffix}")
+    if is_dry_run():
+        would("file_write", "policy_backup", path=backup, source=path, bytes=len(existing))
+        return backup
     backup.write_text(existing)
     log.info("Backed up drifted %s → %s", path, backup)
     return backup
@@ -81,6 +89,7 @@ def install_managed_claude_settings(
 ) -> Path:
     """Read template + deny_rules, merge, write to target. Backs up drift."""
     from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.installer.fs_ops import dry_run_mkdir
     from coding_agents.utils import secure_write_text
 
     template = json.loads(template_path.read_text())
@@ -89,10 +98,13 @@ def install_managed_claude_settings(
     new_content = json.dumps(merged, indent=2) + "\n"
 
     if is_dry_run():
+        # Surface what we would do — including the parent-dir create + drift backup
+        would("mkdir", "policy_parent_dir", path=target.parent)
+        _backup_if_drifted(target, new_content)
         would("policy_emit", "claude_settings", path=target, bytes=len(new_content))
         return target
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_mkdir(target.parent)
     _backup_if_drifted(target, new_content)
     secure_write_text(target, new_content)
     return target
@@ -124,7 +136,10 @@ def install_codex_deny_paths(
         except tomllib.TOMLDecodeError as exc:
             log.warning("User's %s is malformed TOML; backing up + writing fresh: %s", target, exc)
             backup = target.with_name(f"{target.stem}.backup-{_today_suffix()}{target.suffix}")
-            backup.write_text(target.read_text())
+            if is_dry_run():
+                would("file_write", "policy_backup_malformed", path=backup, source=target)
+            else:
+                backup.write_text(target.read_text())
             existing = {}
     else:
         existing = {}
@@ -133,10 +148,14 @@ def install_codex_deny_paths(
     new_content = tomli_w.dumps(merged)
 
     if is_dry_run():
+        from coding_agents.dry_run import would as _would
+        _would("mkdir", "policy_parent_dir", path=target.parent)
+        _backup_if_drifted(target, new_content)
         would("policy_emit", "codex_config", path=target, bytes=len(new_content))
         return target
 
-    target.parent.mkdir(parents=True, exist_ok=True)
+    from coding_agents.installer.fs_ops import dry_run_mkdir
+    dry_run_mkdir(target.parent)
     _backup_if_drifted(target, new_content)
     secure_write_text(target, new_content)
     return target

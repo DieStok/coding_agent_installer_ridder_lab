@@ -38,7 +38,7 @@ class CodingAgentsInstaller(App):
         Binding("q", "quit", "Quit", show=True),
     ]
 
-    def __init__(self, mode: str = "hpc") -> None:
+    def __init__(self, mode: str = "hpc", excluded_agents: set[str] | None = None) -> None:
         super().__init__()
         # Pre-populate from existing config if available
         existing = load_config()
@@ -55,6 +55,13 @@ class CodingAgentsInstaller(App):
             # skipped (mode != "local" guard in execute_install).
             self.state.skills = [s for s in self.state.skills if s not in HPC_ONLY_SKILLS]
             self.state.hooks = [h for h in self.state.hooks if h not in HPC_ONLY_HOOKS]
+
+        # Apply --exclude filter (drops agents from the install pipeline entirely:
+        # no install_cmd, no wrapper, no agent-specific managed-settings emit).
+        # Stash on the app so the agent-select screen can also pre-filter the picker.
+        self.excluded_agents: set[str] = set(excluded_agents or set())
+        if self.excluded_agents:
+            self.state.agents = [a for a in self.state.agents if a not in self.excluded_agents]
 
         # Pre-flight scan for existing agent installations
         from coding_agents.detect_existing import scan_existing

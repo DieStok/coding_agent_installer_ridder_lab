@@ -17,11 +17,21 @@ class AgentSelectScreen(Screen):
         super().__init__()
         self.state = state
 
+    def _excluded(self) -> set[str]:
+        """Set of agents the user passed via --exclude (or empty)."""
+        return getattr(self.app, "excluded_agents", set()) or set()
+
     def compose(self) -> ComposeResult:
+        excluded = self._excluded()
+        excluded_note = (
+            f"\n[yellow]--exclude active:[/yellow] skipping {sorted(excluded)}"
+            if excluded
+            else ""
+        )
         with Vertical(id="step-container"):
             yield Label("Step 2 of 7 — Agent Selection", classes="step-title")
             yield Static(
-                "Choose a preset or customize your agent selection.",
+                "Choose a preset or customize your agent selection." + excluded_note,
                 classes="step-description",
             )
             yield RadioSet(
@@ -34,6 +44,7 @@ class AgentSelectScreen(Screen):
                 *[
                     (f"{info['display_name']} ({key})", key, key in self.state.agents)
                     for key, info in AGENTS.items()
+                    if key not in excluded
                 ],
                 id="agent-list",
             )
@@ -46,14 +57,15 @@ class AgentSelectScreen(Screen):
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         agent_list = self.query_one("#agent-list", SelectionList)
+        excluded = self._excluded()
         idx = event.radio_set.pressed_index
         if idx == 0:
             self.state.preset = "core"
-            self.state.agents = list(PRESETS["core"])
+            self.state.agents = [a for a in PRESETS["core"] if a not in excluded]
             agent_list.display = False
         elif idx == 1:
             self.state.preset = "all"
-            self.state.agents = list(PRESETS["all"])
+            self.state.agents = [a for a in PRESETS["all"] if a not in excluded]
             agent_list.display = False
         else:
             self.state.preset = "custom"
