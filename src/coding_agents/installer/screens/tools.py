@@ -19,7 +19,7 @@ from coding_agents.installer.state import InstallerState
 
 # Picker labels (developer mode) — keep in sync with the `key` column of
 # screens._links.TOOLS.
-TOOL_OPTIONS = [(label, key) for key, label, _url in TOOLS]
+TOOL_OPTIONS = [(label, key) for key, label, _sub_links in TOOLS]
 
 
 class ToolsScreen(Screen):

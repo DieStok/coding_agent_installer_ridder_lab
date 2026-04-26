@@ -16,8 +16,8 @@ from coding_agents.installer.screens._links import HOOKS, SKILLS, render_list
 from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
-SKILL_OPTIONS = [(label, key) for key, label, _url in SKILLS]
-HOOK_OPTIONS = [(label, key) for key, label, _url in HOOKS]
+SKILL_OPTIONS = [(label, key) for key, label, _sub_links in SKILLS]
+HOOK_OPTIONS = [(label, key) for key, label, _sub_links in HOOKS]
 
 
 class SkillsHooksScreen(Screen):
