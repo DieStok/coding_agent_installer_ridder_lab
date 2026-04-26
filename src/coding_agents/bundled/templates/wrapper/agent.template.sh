@@ -50,6 +50,22 @@ if [ -z "${TMPDIR:-}" ] || [ ! -d "$TMPDIR" ]; then
   exit 8
 fi
 
+# --- Canonicalize HOME ---
+# SLURM can strip HOME from the env on some configurations even when it's
+# in --export; downstream code (~/.claude/.credentials.json check, the
+# pyvenv.cfg allowlist that resolves $HOME paths) needs HOME to be set
+# under `set -u`. Look it up from passwd if missing.
+if [ -z "${HOME:-}" ]; then
+  if command -v getent >/dev/null 2>&1; then
+    HOME=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f6)
+  fi
+  if [ -z "${HOME:-}" ]; then
+    echo "agent-${AGENT_NAME}: cannot determine \$HOME — pass it via srun --export." >&2
+    exit 9
+  fi
+  export HOME
+fi
+
 # --- conda/venv carrying ($:ro per security H4; pyvenv.cfg canonicalized per H3) ---
 ENV_BINDS=()
 if [ -n "${VIRTUAL_ENV:-}" ]; then
@@ -59,16 +75,29 @@ if [ -n "${VIRTUAL_ENV:-}" ]; then
     if [ -n "$VENV_HOME" ]; then
       VENV_HOME_REAL=$(realpath -e "$VENV_HOME" 2>/dev/null || true)
       if [ -n "$VENV_HOME_REAL" ] && [[ "$VENV_HOME_REAL" != "$PWD"* ]]; then
+        # Allowlist for pyvenv.cfg `home =` paths. We bind these read-only
+        # into the sandbox so Python inside the venv can find its own
+        # toolchain. Covers system Python, RHEL EPEL, Bright Cluster
+        # modules, uv-managed Pythons (default install path is under
+        # ~/.local/share/uv/python/…), conda installs in HOME, and pyenv.
         case "$VENV_HOME_REAL" in
-          /opt/python/*|/usr/*|/cm/shared/apps/python/*)
-            ENV_BINDS+=( --bind "$VENV_HOME_REAL:$VENV_HOME_REAL:ro" ) ;;
+          /opt/python/*|/usr/*|/cm/shared/apps/python/*) ;;
+          "$HOME"/.local/share/uv/python/*) ;;
+          "$HOME"/.local/uv/*) ;;
+          "$HOME"/miniconda3/*|"$HOME"/miniconda/*) ;;
+          "$HOME"/anaconda3/*|"$HOME"/anaconda/*) ;;
+          "$HOME"/.pyenv/versions/*) ;;
           *)
             if [ -n "${CONDA_PREFIX:-}" ] && [[ "$VENV_HOME_REAL" == "$CONDA_PREFIX"* ]]; then
               :
             else
               echo "agent-${AGENT_NAME}: pyvenv.cfg home '$VENV_HOME_REAL' not in allowlist; ignoring." >&2
+              VENV_HOME_REAL=""
             fi ;;
         esac
+        if [ -n "$VENV_HOME_REAL" ]; then
+          ENV_BINDS+=( --bind "$VENV_HOME_REAL:$VENV_HOME_REAL:ro" )
+        fi
       fi
     fi
   fi
