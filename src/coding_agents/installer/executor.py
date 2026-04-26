@@ -428,6 +428,24 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
         # (Option 4).
         MANUAL = "https://entire.io/  (or https://github.com/entireio/cli)"
         log.write("  Installing entire CLI…")
+
+        # Pre-flight cleanup — install.sh has a "PATH conflict" sanity
+        # check at the end that fires (rc != 0) if `command -v entire`
+        # resolves to anything other than its own install_path. On a
+        # second install run, our own <install_dir>/bin/entire symlink
+        # from the previous run shows up first on PATH (we put it there
+        # via the shell rc block) and triggers a false conflict. Removing
+        # the old symlink up front lets install.sh run clean.
+        stale = install_dir / "bin" / "entire"
+        if stale.exists() or stale.is_symlink():
+            try:
+                if is_dry_run():
+                    would("symlink", "remove", path=stale, reason="entire pre-install cleanup")
+                else:
+                    stale.unlink()
+                log.write("  [dim]Removed stale <install_dir>/bin/entire symlink[/dim]")
+            except OSError as exc:
+                log.write(f"  [yellow]could not remove {stale}: {exc}[/yellow]")
         cmd = (
             "set -euo pipefail; "
             # Pre-flight: bail fast if entire.io isn't reachable.
