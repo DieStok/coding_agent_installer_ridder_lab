@@ -141,6 +141,16 @@ class ReviewScreen(Screen):
         log.write("Run [bold]source ~/.bashrc[/bold] to update your PATH.")
         log.write("Then try: [bold]coding-agents doctor[/bold]")
 
+        # Optional manual installs the user might want to know about.
+        if "entire" not in self.state.tools:
+            log.write(
+                "\n[bold]Optional, install yourself:[/bold]\n"
+                "  • [bold]entire CLI[/bold] (session recording for agent runs) — "
+                "https://entire.io/  ·  https://github.com/entireio/cli\n"
+                "    (Not auto-installed because the upstream installer's post-install "
+                "hook reliably hangs on HPCs. Install on your laptop if you want it.)"
+            )
+
         self._install_done = True
         done_btn = self.query_one("#btn-done", Button)
         done_btn.disabled = False

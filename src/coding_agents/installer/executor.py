@@ -415,28 +415,32 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
             log.write(f"  [red]✗ agent-browser: {exc}[/red]")
 
     if "entire" in tools:
-        # Reference: https://github.com/entireio/cli (verified). The
-        # install.sh script itself is fully non-interactive — no `read`,
-        # no prompts. The hang we saw on HPC was missing curl timeouts
-        # inside the script, where curl would block forever on a
-        # firewalled GitHub egress. We hard-cap the whole thing with
-        # bash's `timeout` builtin AND inject curl timeout flags via the
-        # `curl` envelope. Telemetry-disable step is dropped because it
-        # touches the network and can hang the same way; users can run
-        # `entire enable --telemetry=false` themselves if they want.
+        # Reference: https://github.com/entireio/cli — install.sh is itself
+        # non-interactive, but its very last line is
+        #   "$install_path" curl-bash-post-install
+        # which calls back into the freshly-installed binary for
+        # telemetry/auth init. That subprocess has no timeout and reliably
+        # hangs on HPCs. We strip that line via sed before piping to bash
+        # (Option 1 from the design discussion). The binary still installs
+        # to ~/.local/bin and is fully usable; if a feature later needs the
+        # post-install hook the user can run `entire <whatever>` manually.
+        # On any failure we fall back to a clear "install manually" pointer
+        # (Option 4).
+        MANUAL = "https://entire.io/  (or https://github.com/entireio/cli)"
         log.write("  Installing entire CLI…")
         cmd = (
             "set -euo pipefail; "
             # Pre-flight: bail fast if entire.io isn't reachable.
             "if ! curl -sSfI --connect-timeout 10 --max-time 15 "
             "https://entire.io/install.sh >/dev/null; then "
-            "  echo 'entire.io unreachable from this node — skipping' >&2; "
-            "  exit 99; "
+            "  echo 'entire.io unreachable from this node' >&2; exit 99; "
             "fi; "
-            # Then run the installer with the whole thing bounded.
+            # Strip the hanging curl-bash-post-install line, then bash it.
             "timeout 120 bash -c '"
             "curl -fsSL --connect-timeout 15 --max-time 90 "
-            "https://entire.io/install.sh | bash"
+            "https://entire.io/install.sh "
+            "| sed \"/curl-bash-post-install/d\" "
+            "| bash"
             "'"
         )
         try:
@@ -448,16 +452,15 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
             )
             if result.returncode == 99:
                 log.write(
-                    "  [yellow]entire: entire.io unreachable from this HPC node — skipping. "
-                    "Install manually later if needed.[/yellow]"
+                    f"  [yellow]entire: entire.io unreachable from this HPC node. "
+                    f"Install manually: {MANUAL}[/yellow]"
                 )
             elif result.returncode != 0:
                 stderr = (getattr(result, "stderr", "") or "").strip().splitlines()[-3:]
                 log.write(
                     f"  [yellow]entire installer exit {result.returncode}: "
                     f"{' / '.join(stderr) or 'no stderr'}. "
-                    f"Install manually later if needed: "
-                    f"https://github.com/entireio/cli[/yellow]"
+                    f"Install manually: {MANUAL}[/yellow]"
                 )
             else:
                 entire_bin = shutil.which("entire")
@@ -465,21 +468,25 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
                     safe_symlink(Path(entire_bin), install_dir / "bin" / "entire")
                     log.write("  [green]✓[/green] entire CLI installed")
                     log.write(
-                        "  [dim]Run [bold]entire enable --telemetry=false[/bold] yourself "
-                        "to opt out of telemetry.[/dim]"
+                        "  [dim]Note: skipped entire's post-install hook (it hangs on "
+                        "HPCs without timeouts). The binary is installed and usable. "
+                        "If a feature complains about missing setup, run "
+                        "[bold]entire login[/bold] (or whatever it asks for) once.[/dim]"
                     )
                 else:
                     log.write(
-                        "  [yellow]entire: install script reported success but `entire` "
-                        "not on PATH; skipping symlink.[/yellow]"
+                        f"  [yellow]entire: install script reported success but "
+                        f"`entire` not on PATH; install manually: {MANUAL}[/yellow]"
                     )
         except subprocess.TimeoutExpired:
             log.write(
-                "  [yellow]entire: install exceeded 150s hard cap — skipping. "
-                "Install manually later if needed.[/yellow]"
+                f"  [yellow]entire: install exceeded 150s hard cap. "
+                f"Install manually: {MANUAL}[/yellow]"
             )
         except Exception as exc:
-            log.write(f"  [yellow]entire: {exc}[/yellow]")
+            log.write(
+                f"  [yellow]entire: {exc}. Install manually: {MANUAL}[/yellow]"
+            )
 
 
 def _install_shellcheck(install_dir: Path) -> None:

@@ -49,7 +49,7 @@ DEFAULT_CONFIG = {
         "lint_runner",
         "hpc_validator",
     ],
-    "tools": ["linters", "entire"],
+    "tools": ["linters"],
     "vscode_extensions": True,
     "mode": "hpc",
     "installed_at": "",
