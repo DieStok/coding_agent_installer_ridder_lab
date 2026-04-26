@@ -111,6 +111,18 @@ RadioSet {
 
 #install-log {
     border: tall $primary 30%;
-    height: 18;
+    height: 12;
     margin: 1 0;
+}
+
+#verbose-log {
+    border: tall $primary 30%;
+    height: 12;
+    margin: 0 0 1 0;
+    color: $text-muted;
+}
+
+#install-progress {
+    margin: 0 0 1 0;
+    width: 100%;
 }

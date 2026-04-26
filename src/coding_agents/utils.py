@@ -101,12 +101,24 @@ def run(
     if stdin_devnull:
         kwargs["stdin"] = subprocess.DEVNULL
 
+    # Lazy import — avoids circular import (observer imports nothing from
+    # utils, but we keep it lazy for safety).
+    from coding_agents.installer.observer import emit_verbose
+
     for attempt in range(2):
         try:
             result = subprocess.run(cmd, **kwargs)
             stdout_preview = (getattr(result, "stdout", "") or "")[:200]
             stderr_preview = (getattr(result, "stderr", "") or "")[:200]
             log.debug("run: rc=%d stdout=%r stderr=%r", result.returncode, stdout_preview, stderr_preview)
+            # Emit captured output to the verbose pane (no-op if no sink set).
+            cmd_label = cmd[0] if isinstance(cmd, list) else cmd.split()[0]
+            stdout_full = getattr(result, "stdout", "") or ""
+            stderr_full = getattr(result, "stderr", "") or ""
+            if stdout_full:
+                emit_verbose(f"$ {cmd_label} (stdout)\n{stdout_full}")
+            if stderr_full:
+                emit_verbose(f"$ {cmd_label} (stderr)\n{stderr_full}")
             if check and result.returncode != 0:
                 log.error("run: cmd=%s failed rc=%d: %s", cmd, result.returncode, stderr_preview)
                 raise subprocess.CalledProcessError(

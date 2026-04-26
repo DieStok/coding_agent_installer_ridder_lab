@@ -66,18 +66,48 @@ async def _run_in_thread(func, *args, **kwargs):
     return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
 
-async def execute_install(state: InstallerState, log: RichLog) -> None:
-    """Execute the full installation based on user selections."""
+async def execute_install(state: InstallerState, log: "RichLog") -> None:
+    """Execute the full installation based on user selections.
+
+    `log` is a textual.widgets.RichLog OR an InstallObserver — both expose
+    `.write()`. When the observer is passed, calling its `.start_phase()`
+    advances the progress bar in the TUI; when a bare RichLog is passed
+    (e.g. from tests) the start_phase calls are no-ops via getattr.
+    """
     install_dir = state.install_path
     _log.info("execute_install: mode=%s, install_dir=%s, agents=%s, tools=%s, skills=%s",
               state.mode, install_dir, state.agents, state.tools, state.skills)
 
+    # Compute the visible-phase count up-front so the progress bar can show
+    # X / N instead of an indeterminate spinner.
+    phases = [
+        "backup", "mkdir", "agents", "config", "vscode_ext",
+        "shell_rc", "settings_merge", "save_config",
+    ]
+    if state.tools:           phases.append("tools")
+    if state.skills:          phases.append("skills")
+    if state.hooks:           phases.append("hooks")
+    if state.mode != "local":
+        phases.extend(["sandbox_dirs", "wrappers", "policy"])
+
+    set_total = getattr(log, "set_total_phases", None)
+    if callable(set_total):
+        set_total(len(phases))
+
+    def _phase(name: str) -> None:
+        """Advance the progress bar; degrade to a plain header on bare RichLog."""
+        starter = getattr(log, "start_phase", None)
+        if callable(starter):
+            starter(name)
+        else:
+            log.write(f"\n[bold]{name}[/bold]")
+
     # --- 0. Backup existing installations ---
-    log.write("[bold]Checking for existing installations...[/bold]")
+    _phase("Checking for existing installations...")
     await _backup_existing(state.agents, log)
 
-    # Create directory structure
-    log.write("\n[bold]Creating directory structure...[/bold]")
+    # --- create dir structure ---
+    _phase("Creating directory structure...")
     for subdir in ["bin", "config", "config/mcp", "config/templates", "hooks",
                     "skills", "tools", "tools/bin", "logs", "node_modules"]:
         dry_run_mkdir(install_dir / subdir)
@@ -85,7 +115,7 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
     bundled = _bundled_dir()
 
     # --- 1. Install agents ---
-    log.write("\n[bold]Installing agents...[/bold]")
+    _phase("Installing agents...")
     for agent_key in state.agents:
         agent = AGENTS[agent_key]
         log.write(f"  Installing {agent['display_name']}...")
@@ -97,45 +127,44 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
 
     # --- 2. Install tools ---
     if state.tools:
-        log.write("\n[bold]Installing tools...[/bold]")
+        _phase("Installing tools...")
         await _install_tools(state.tools, install_dir, log)
 
     # --- 3. Install skills ---
     if state.skills:
-        log.write("\n[bold]Installing skills...[/bold]")
+        _phase("Installing skills...")
         await _install_skills(state.skills, install_dir, bundled, log, mode=state.mode)
 
     # --- 4. Copy hooks ---
     if state.hooks:
-        log.write("\n[bold]Installing hooks...[/bold]")
+        _phase("Installing hooks...")
         await _install_hooks(state.hooks, install_dir, bundled, log)
 
     # --- 5. Bootstrap per-user sandbox dirs (HPC only) ---
     if state.mode != "local":
-        log.write("\n[bold]Bootstrapping per-user sandbox dirs...[/bold]")
+        _phase("Bootstrapping per-user sandbox dirs...")
         await _bootstrap_user_dirs(state, log)
 
     # --- 6. Copy config files (mode-aware AGENTS.md) ---
-    log.write("\n[bold]Copying configuration files...[/bold]")
+    _phase("Copying configuration files...")
     await _install_config(install_dir, bundled, log, mode=state.mode)
 
-    # --- 7. VSCode extension recommendations (always emit JSON; auto-install
-    #        only if the user opted in AND `code` is on PATH, i.e. local mode).
-    log.write("\n[bold]VSCode extensions...[/bold]")
+    # --- 7. VSCode extension recommendations ---
+    _phase("VSCode extensions...")
     await _install_vscode_extensions(state, install_dir, log)
 
     # --- 8. Create sandbox wrapper scripts (HPC only) ---
     if state.mode != "local":
-        log.write("\n[bold]Creating sandbox wrapper scripts...[/bold]")
+        _phase("Creating sandbox wrapper scripts...")
         await _create_sandbox_wrappers(state, install_dir, log)
 
     # --- 8a. Emit managed policy files (Claude settings + Codex TOML) ---
     if state.mode != "local":
-        log.write("\n[bold]Emitting managed policy files...[/bold]")
+        _phase("Emitting managed policy files...")
         await _emit_managed_policy(state, bundled, log)
 
     # --- 9. Shell integration ---
-    log.write("\n[bold]Setting up shell integration...[/bold]")
+    _phase("Setting up shell integration...")
     modified = await _run_in_thread(
         lambda: inject_shell_block(
             install_dir,
@@ -148,13 +177,18 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
         log.write(f"  [green]✓[/green] Updated {f}")
 
     # --- 10. Smart-merge existing settings ---
-    log.write("\n[bold]Merging settings with existing configs...[/bold]")
+    _phase("Merging settings with existing configs...")
     await _merge_existing_settings(state, install_dir, log)
 
     # --- 11. Save config ---
+    _phase("Saving config...")
     config = state.to_config_dict()
     mark_installed(config)
-    log.write(f"\n[green]✓[/green] Config saved to ~/.coding-agents.json")
+    log.write(f"  [green]✓[/green] Config saved to ~/.coding-agents.json")
+
+    finisher = getattr(log, "finish_phase", None)
+    if callable(finisher):
+        finisher()
 
 
 async def _backup_existing(agents: list[str], log: RichLog) -> None:

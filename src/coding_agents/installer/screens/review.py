@@ -5,9 +5,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Label, RichLog, Static
+from textual.widgets import Button, Label, ProgressBar, RichLog, Static
 
 from coding_agents.agents import AGENTS, agents_with_vscode_ext
+from coding_agents.installer.observer import (
+    InstallObserver,
+    set_verbose_sink,
+)
 from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
@@ -55,7 +59,14 @@ class ReviewScreen(Screen):
         with Vertical(id="step-container"):
             yield Label(f"Step 6 of {TOTAL_STEPS} — Review & Install", classes="step-title")
             yield Static(summary, classes="banner-info")
+            yield ProgressBar(total=100, show_eta=False, id="install-progress")
+            yield Static("[bold]Install log[/bold]", classes="section-heading")
             yield RichLog(id="install-log", wrap=True, markup=True)
+            yield Static(
+                "[bold]Verbose output[/bold] [dim](subprocess stdout/stderr)[/dim]",
+                classes="section-heading",
+            )
+            yield RichLog(id="verbose-log", wrap=False, markup=False, max_lines=2000)
 
             with Horizontal(classes="nav"):
                 yield Button("← Back", id="btn-back")
@@ -81,10 +92,22 @@ class ReviewScreen(Screen):
     async def _execute_install(self) -> None:
         """Run the full installation sequence."""
         log = self.query_one("#install-log", RichLog)
+        verbose = self.query_one("#verbose-log", RichLog)
+        progress = self.query_one("#install-progress", ProgressBar)
+
+        observer = InstallObserver(log=log, verbose=verbose, progress=progress)
+
+        # Route subprocess stdout/stderr from utils.run() into the verbose
+        # pane via the module-level sink. Always cleared in `finally`.
+        def _sink(text: str) -> None:
+            self.app.call_from_thread(observer.verbose, text)
+
+        set_verbose_sink(_sink)
+
         from coding_agents.installer.executor import execute_install
 
         try:
-            await execute_install(self.state, log)
+            await execute_install(self.state, observer)
         except Exception as exc:
             log.write(f"\n[red bold]Installation failed:[/red bold] {exc}")
             log.write("\n[dim]Press Done or 'q' to exit and inspect the log file.[/dim]")
@@ -95,6 +118,8 @@ class ReviewScreen(Screen):
             done_btn.variant = "error"
             done_btn.focus()
             return
+        finally:
+            set_verbose_sink(None)
 
         log.write("\n[green bold]Installation complete![/green bold]")
         log.write("Run [bold]source ~/.bashrc[/bold] to update your PATH.")
