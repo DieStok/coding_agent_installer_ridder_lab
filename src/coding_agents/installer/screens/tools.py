@@ -10,8 +10,6 @@ from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 TOOL_OPTIONS = [
-    ("crawl4ai — web crawling & content extraction", "crawl4ai"),
-    ("agent-browser — headless browser (bundles Chromium)", "agent-browser"),
     ("Linting tools (ruff, vulture, pyright, yamllint, biome, shellcheck)", "linters"),
     ("Entire CLI — session recording", "entire"),
 ]

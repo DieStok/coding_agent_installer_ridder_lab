@@ -13,7 +13,6 @@ SKILL_OPTIONS = [
     ("compound-engineering — brainstorm/plan/work/review workflow", "compound-engineering"),
     ("scientific-agent-skills — research-oriented agent skills", "scientific-agent-skills"),
     ("autoresearch — autonomous improvement engine (10 commands)", "autoresearch"),
-    ("crawl4ai — web crawling skill (bundled)", "crawl4ai"),
     ("hpc-cluster — UMC Utrecht HPC reference (HPC mode only)", "hpc-cluster"),
 ]
 
