@@ -1,0 +1,11 @@
+{
+  "_comment": "Default Claude Code settings emitted by coding-agents installer. NOTE: this lives at ~/.claude/settings.json, which is user-overridable. For TRUE managed enforcement (cannot be overridden), v2 will write to /etc/claude-code/managed-settings.json (requires hpcsupport / root). See docs/v2-deferred.md item D5.",
+  "allowManagedMcpServersOnly": true,
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": []
+  },
+  "sandbox": {
+    "failIfUnavailable": true
+  }
+}

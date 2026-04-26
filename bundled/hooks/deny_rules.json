@@ -1,12 +1,21 @@
 {
-  "description": "Permission deny rules to prevent agents from reading sensitive files",
+  "description": "Permission deny rules — single source of truth for both Claude Code (~/.claude/settings.json permissions.deny) and Codex CLI (~/.codex/config.toml [sandbox] deny_paths). Defence-in-depth on top of the Apptainer cwd-only bind.",
   "deny": [
     "Read(./.env)",
     "Read(./.env.*)",
     "Read(./secrets/**)",
     "Read(./config/credentials.json)",
     "Read(./.entire/metadata/**)",
-    "Read(./build)"
+    "Read(./build/**)",
+    "Read(~/.ssh/**)",
+    "Read(~/.gnupg/**)",
+    "Read(~/.irods/**)",
+    "Read(~/.aws/**)",
+    "Read(~/.kube/**)",
+    "Read(~/.config/gcloud/**)",
+    "Read(~/.codex/auth.json)",
+    "Read(~/.netrc)",
+    "Read(~/.config/gh/**)"
   ],
   "claude_code_permissions": {
     "deny": [
@@ -15,8 +24,33 @@
       "Read(./secrets/**)",
       "Read(./config/credentials.json)",
       "Read(./.entire/metadata/**)",
-      "Read(./build)"
+      "Read(./build/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.irods/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.codex/auth.json)",
+      "Read(~/.netrc)",
+      "Read(~/.config/gh/**)"
     ]
   },
-  "codex_starlark_rules": "# Auto-generated deny rules for Codex CLI\nprefix_rule(\n    pattern = [\"cat\", \".env\"],\n    decision = \"forbidden\",\n    justification = \"Reading .env files is denied by policy\"\n)\nprefix_rule(\n    pattern = [\"cat\", \"secrets/\"],\n    decision = \"forbidden\",\n    justification = \"Reading secrets directory is denied by policy\"\n)\nprefix_rule(\n    pattern = [\"cat\", \"config/credentials.json\"],\n    decision = \"forbidden\",\n    justification = \"Reading credentials file is denied by policy\"\n)\n"
+  "codex_config_toml_deny_paths": [
+    "./.env",
+    "./.env.*",
+    "./secrets",
+    "./config/credentials.json",
+    "./.entire/metadata",
+    "./build",
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.irods",
+    "~/.aws",
+    "~/.kube",
+    "~/.config/gcloud",
+    "~/.codex/auth.json",
+    "~/.netrc",
+    "~/.config/gh"
+  ]
 }

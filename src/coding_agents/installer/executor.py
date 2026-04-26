@@ -129,6 +129,11 @@ async def execute_install(state: InstallerState, log: RichLog) -> None:
         log.write("\n[bold]Creating sandbox wrapper scripts...[/bold]")
         await _create_sandbox_wrappers(state, install_dir, log)
 
+    # --- 8a. Emit managed policy files (Claude settings + Codex TOML) ---
+    if state.mode != "local":
+        log.write("\n[bold]Emitting managed policy files...[/bold]")
+        await _emit_managed_policy(state, bundled, log)
+
     # --- 9. Shell integration ---
     log.write("\n[bold]Setting up shell integration...[/bold]")
     modified = await _run_in_thread(
@@ -699,3 +704,35 @@ async def _bootstrap_user_dirs(state, log: RichLog) -> None:
             f"  [yellow]⚠ SIF not yet readable at {sif_p} "
             "(lab admin must build & copy; doctor will verify later)[/yellow]"
         )
+
+
+async def _emit_managed_policy(state, bundled: Path, log: RichLog) -> None:
+    """Emit Claude ~/.claude/settings.json + Codex ~/.codex/config.toml from
+    the single-source bundled/hooks/deny_rules.json.
+
+    NOTE: ~/.claude/settings.json is user-overridable, NOT enforced.
+    True enforcement requires writing /etc/claude-code/managed-settings.json
+    (root needed; v2 D5).
+    """
+    from coding_agents.installer.policy_emit import (
+        install_codex_deny_paths,
+        install_managed_claude_settings,
+    )
+
+    home = Path.home()
+    deny_rules_path = bundled / "hooks" / "deny_rules.json"
+    template_path = bundled / "templates" / "managed-claude-settings.json"
+
+    if "claude" in state.agents:
+        if template_path.exists() and deny_rules_path.exists():
+            target = home / ".claude" / "settings.json"
+            install_managed_claude_settings(template_path, deny_rules_path, target)
+            log.write(f"  [green]✓[/green] Claude managed settings: {target}")
+        else:
+            log.write("  [yellow]⚠ Claude template or deny_rules missing; skipping[/yellow]")
+
+    if "codex" in state.agents:
+        if deny_rules_path.exists():
+            target = home / ".codex" / "config.toml"
+            install_codex_deny_paths(deny_rules_path, target)
+            log.write(f"  [green]✓[/green] Codex deny paths: {target}")
