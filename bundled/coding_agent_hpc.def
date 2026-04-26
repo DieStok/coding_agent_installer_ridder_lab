@@ -37,7 +37,8 @@ From: ubuntu:24.04
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y --no-install-recommends nodejs
     rm -rf /var/lib/apt/lists/*
-    npm config set unsafe-perm true
+    # NB: `npm config set unsafe-perm` was removed in npm 9; not needed
+    # under Node 20 / npm 10 (npm no longer drops privs to nobody).
 
     # gitleaks pinned binary (apt path stale on 22.04)
     GITLEAKS_VERSION=8.21.2
@@ -54,7 +55,7 @@ From: ubuntu:24.04
     mkdir -p /opt/agents
     cp /sif-build/package.json /opt/agents/package.json
     cp /sif-build/package-lock.json /opt/agents/package-lock.json
-    cd /opt/agents && npm ci --omit=dev --unsafe-perm
+    cd /opt/agents && npm ci --omit=dev
     for bin in claude codex opencode pi; do
       ln -sf "/opt/agents/node_modules/.bin/$bin" "/usr/local/bin/$bin"
     done
