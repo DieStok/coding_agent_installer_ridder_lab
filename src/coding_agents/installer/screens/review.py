@@ -1,38 +1,46 @@
-"""Step 7: Review selections and execute installation."""
+"""Step 6: Review selections and execute installation."""
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Label, RichLog, Static
 
 from coding_agents.agents import AGENTS, agents_with_vscode_ext
+from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 
 class ReviewScreen(Screen):
-    """Step 7 — Review all selections and execute the install."""
+    """Step 6 — Review all selections and execute the install."""
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit", show=True, priority=True),
+    ]
 
     def __init__(self, state: InstallerState) -> None:
         super().__init__()
         self.state = state
+        self._install_done = False
 
     def compose(self) -> ComposeResult:
         s = self.state
-        agents_str = ", ".join(AGENTS[a]["display_name"] for a in s.agents)
-        tools_str = ", ".join(s.tools) if s.tools else "none"
-        skills_str = ", ".join(s.skills) if s.skills else "none"
-        hooks_str = ", ".join(s.hooks) if s.hooks else "none"
+        agents_str = ", ".join(AGENTS[a]["display_name"] for a in s.agents) or "[dim]none[/dim]"
+        tools_str = ", ".join(s.tools) if s.tools else "[dim]none[/dim]"
+        skills_str = ", ".join(s.skills) if s.skills else "[dim]none[/dim]"
+        hooks_str = ", ".join(s.hooks) if s.hooks else "[dim]none[/dim]"
         exts = agents_with_vscode_ext(s.agents)
-        ext_str = ", ".join(ext_id for _, ext_id in exts) if exts and s.vscode_extensions else "none"
+        if exts:
+            ext_str = ", ".join(ext_id for _, ext_id in exts)
+            ext_str += "  [dim](extensions.json will be written)[/dim]"
+        else:
+            ext_str = "[dim]none[/dim]"
 
         sandbox_str = (
             f"Apptainer (SIF: {s.sandbox_sif_path})"
             if s.mode != "local"
-            else "none (local mode)"
+            else "[dim]none (local mode)[/dim]"
         )
         summary = (
             f"[bold]Installation Directory:[/bold] {s.install_dir}\n"
@@ -41,37 +49,58 @@ class ReviewScreen(Screen):
             f"[bold]Tools:[/bold] {tools_str}\n"
             f"[bold]Sandbox:[/bold] {sandbox_str}\n"
             f"[bold]Skills:[/bold] {skills_str}\n"
-            f"[bold]Hooks:[/bold] {hooks_str}\n"
+            f"[bold]Hooks:[/bold] {hooks_str}"
         )
 
         with Vertical(id="step-container"):
-            yield Label("Step 7 of 7 — Review & Install", classes="step-title")
-            yield Static(summary, classes="step-description")
-            yield Button("← Back", id="btn-back")
-            yield Button("Install", variant="success", id="btn-install")
+            yield Label(f"Step 6 of {TOTAL_STEPS} — Review & Install", classes="step-title")
+            yield Static(summary, classes="banner-info")
             yield RichLog(id="install-log", wrap=True, markup=True)
+
+            with Horizontal(classes="nav"):
+                yield Button("← Back", id="btn-back")
+                yield Button("Install", variant="success", id="btn-install")
+                yield Button("Done", variant="primary", id="btn-done", disabled=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
+            if self._install_done:
+                self.notify("Install already completed — press Done to exit.", severity="information")
+                return
             self.app.pop_screen()
         elif event.button.id == "btn-install":
             event.button.disabled = True
-            self.run_worker(self._execute_install())
+            self.query_one("#btn-back", Button).disabled = True
+            self.run_worker(self._execute_install(), exclusive=True)
+        elif event.button.id == "btn-done":
+            self.app.exit()
+
+    def action_quit(self) -> None:
+        self.app.exit()
 
     async def _execute_install(self) -> None:
         """Run the full installation sequence."""
         log = self.query_one("#install-log", RichLog)
-        state = self.state
-        install_dir = Path(state.install_dir).expanduser()
-
         from coding_agents.installer.executor import execute_install
 
         try:
-            await execute_install(state, log)
+            await execute_install(self.state, log)
         except Exception as exc:
-            log.write(f"\n[red]Installation failed: {exc}[/red]")
+            log.write(f"\n[red bold]Installation failed:[/red bold] {exc}")
+            log.write("\n[dim]Press Done or 'q' to exit and inspect the log file.[/dim]")
+            self._install_done = True
+            done_btn = self.query_one("#btn-done", Button)
+            done_btn.disabled = False
+            done_btn.label = "Exit"
+            done_btn.variant = "error"
+            done_btn.focus()
             return
 
         log.write("\n[green bold]Installation complete![/green bold]")
-        log.write(f"Run [bold]source ~/.bashrc[/bold] to update your PATH.")
-        log.write(f"Then try: [bold]coding-agents doctor[/bold]")
+        log.write("Run [bold]source ~/.bashrc[/bold] to update your PATH.")
+        log.write("Then try: [bold]coding-agents doctor[/bold]")
+
+        self._install_done = True
+        done_btn = self.query_one("#btn-done", Button)
+        done_btn.disabled = False
+        done_btn.focus()

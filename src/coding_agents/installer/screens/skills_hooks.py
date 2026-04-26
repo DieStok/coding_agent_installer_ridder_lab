@@ -1,11 +1,12 @@
-"""Step 6: Skills & hooks selection."""
+"""Step 5: Skills & hooks selection."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Label, SelectionList, Static
 
+from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 SKILL_OPTIONS = [
@@ -13,7 +14,7 @@ SKILL_OPTIONS = [
     ("scientific-agent-skills — research-oriented agent skills", "scientific-agent-skills"),
     ("autoresearch — autonomous improvement engine (10 commands)", "autoresearch"),
     ("crawl4ai — web crawling skill (bundled)", "crawl4ai"),
-    ("hpc-cluster — UMC Utrecht HPC reference (fetched from HPC share, HPC mode only)", "hpc-cluster"),
+    ("hpc-cluster — UMC Utrecht HPC reference (HPC mode only)", "hpc-cluster"),
 ]
 
 HOOK_OPTIONS = [
@@ -26,7 +27,7 @@ HOOK_OPTIONS = [
 
 
 class SkillsHooksScreen(Screen):
-    """Step 6 — Select skills and hooks to install."""
+    """Step 5 — Select skills and hooks to install."""
 
     def __init__(self, state: InstallerState) -> None:
         super().__init__()
@@ -34,8 +35,9 @@ class SkillsHooksScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="step-container"):
-            yield Label("Step 6 of 7 — Skills & Hooks", classes="step-title")
-            yield Static("Skills (shared across agents via symlinks):", classes="step-description")
+            yield Label(f"Step 5 of {TOTAL_STEPS} — Skills & Hooks", classes="step-title")
+
+            yield Static("Skills (shared across agents via symlinks):", classes="section-heading")
             yield SelectionList[str](
                 *[
                     (label, value, value in self.state.skills)
@@ -43,7 +45,8 @@ class SkillsHooksScreen(Screen):
                 ],
                 id="skills-list",
             )
-            yield Static("Hooks (agent lifecycle scripts):")
+
+            yield Static("Hooks (agent lifecycle scripts):", classes="section-heading")
             yield SelectionList[str](
                 *[
                     (label, value, value in self.state.hooks)
@@ -51,8 +54,10 @@ class SkillsHooksScreen(Screen):
                 ],
                 id="hooks-list",
             )
-            yield Button("← Back", id="btn-back")
-            yield Button("Next →", variant="primary", id="btn-next")
+
+            with Horizontal(classes="nav"):
+                yield Button("← Back", id="btn-back")
+                yield Button("Next →", variant="primary", id="btn-next")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":

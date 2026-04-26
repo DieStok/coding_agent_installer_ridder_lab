@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Label, SelectionList, Static
 
+from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 TOOL_OPTIONS = [
@@ -25,10 +26,10 @@ class ToolsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="step-container"):
-            yield Label("Step 4 of 7 — Tools & Supporting Software", classes="step-title")
+            yield Label(f"Step 4 of {TOTAL_STEPS} — Tools & Supporting Software", classes="step-title")
             yield Static(
-                "Select which supporting tools to install.\n"
-                "All tools go into a shared Python venv or tools/node_modules.",
+                "Select supporting tools to install. All tools share a Python venv "
+                "or live under tools/node_modules.",
                 classes="step-description",
             )
             yield SelectionList[str](
@@ -40,11 +41,14 @@ class ToolsScreen(Screen):
             )
             if "pi" in self.state.agents:
                 yield Static(
-                    "[dim]Pi extensions (pi-ask-user, pi-subagents) will be "
-                    "auto-installed after Pi setup.[/dim]"
+                    "Pi extensions (pi-ask-user, pi-subagents) will be auto-installed "
+                    "after Pi setup.",
+                    classes="muted",
                 )
-            yield Button("← Back", id="btn-back")
-            yield Button("Next →", variant="primary", id="btn-next")
+
+            with Horizontal(classes="nav"):
+                yield Button("← Back", id="btn-back")
+                yield Button("Next →", variant="primary", id="btn-next")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
@@ -52,8 +56,6 @@ class ToolsScreen(Screen):
         elif event.button.id == "btn-next":
             tools_list = self.query_one("#tools-list", SelectionList)
             self.state.tools = list(tools_list.selected)
-            # Phase 1: skip the (deferred) SandboxConfigScreen and use
-            # config.py defaults silently. Phase 3 lands the new screen.
             from coding_agents.installer.screens.skills_hooks import SkillsHooksScreen
 
             self.app.push_screen(SkillsHooksScreen(self.state))

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Label, RadioButton, RadioSet, SelectionList, Static
 
 from coding_agents.agents import AGENTS, PRESETS
+from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 
@@ -24,12 +25,12 @@ class AgentSelectScreen(Screen):
     def compose(self) -> ComposeResult:
         excluded = self._excluded()
         excluded_note = (
-            f"\n[yellow]--exclude active:[/yellow] skipping {sorted(excluded)}"
+            f"\n[$warning]--exclude active:[/] skipping {sorted(excluded)}"
             if excluded
             else ""
         )
         with Vertical(id="step-container"):
-            yield Label("Step 2 of 7 — Agent Selection", classes="step-title")
+            yield Label(f"Step 2 of {TOTAL_STEPS} — Agent Selection", classes="step-title")
             yield Static(
                 "Choose a preset or customize your agent selection." + excluded_note,
                 classes="step-description",
@@ -48,8 +49,10 @@ class AgentSelectScreen(Screen):
                 ],
                 id="agent-list",
             )
-            yield Button("← Back", id="btn-back")
-            yield Button("Next →", variant="primary", id="btn-next")
+
+            with Horizontal(classes="nav"):
+                yield Button("← Back", id="btn-back")
+                yield Button("Next →", variant="primary", id="btn-next")
 
     def on_mount(self) -> None:
         agent_list = self.query_one("#agent-list", SelectionList)
@@ -79,7 +82,8 @@ class AgentSelectScreen(Screen):
                 agent_list = self.query_one("#agent-list", SelectionList)
                 self.state.agents = list(agent_list.selected)
             if not self.state.agents:
-                return  # Must select at least one
+                self.notify("Select at least one agent.", severity="warning")
+                return
             from coding_agents.installer.screens.vscode_ext import VSCodeExtScreen
 
             self.app.push_screen(VSCodeExtScreen(self.state))

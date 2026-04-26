@@ -49,3 +49,6 @@ coding_agent_hpc.sif
 coding_agent_hpc.sif.sha256
 *.sif
 *.sif.sha256
+
+# Project-local skills (cloned reference material — keep out of repo)
+.claude/skills/

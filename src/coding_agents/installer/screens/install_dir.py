@@ -5,12 +5,15 @@ import os
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, Static
 
 from coding_agents.detect_existing import GlobalInventory
 from coding_agents.installer.state import InstallerState
+
+TOTAL_STEPS = 6
 
 
 def _default_dir(mode: str = "hpc") -> str:
@@ -26,6 +29,10 @@ def _default_dir(mode: str = "hpc") -> str:
 class InstallDirScreen(Screen):
     """Step 1 — Choose installation directory."""
 
+    BINDINGS = [
+        Binding("enter", "next", "Next", show=False),
+    ]
+
     def __init__(self, state: InstallerState, inventory: GlobalInventory | None = None) -> None:
         super().__init__()
         self.state = state
@@ -34,21 +41,19 @@ class InstallDirScreen(Screen):
     def compose(self) -> ComposeResult:
         default = self.state.install_dir or _default_dir(self.state.mode)
         with Vertical(id="step-container"):
-            yield Label("Step 1 of 7 — Installation Directory", classes="step-title")
+            yield Label(f"Step 1 of {TOTAL_STEPS} — Installation Directory", classes="step-title")
 
-            # Info banner if existing installations detected
             if self.inventory and self.inventory.has_existing:
                 existing = self.inventory.existing_agents
-                names = ", ".join(a.display_name for a in existing)
-                details = []
-                for a in existing:
-                    details.append(f"  {a.display_name}: {a.file_count} files ({a.human_size()}) in {a.config_dir}")
-                detail_text = "\n".join(details)
+                details = "\n".join(
+                    f"  • {a.display_name}: {a.file_count} files ({a.human_size()}) in {a.config_dir}"
+                    for a in existing
+                )
                 yield Static(
-                    f"[yellow bold]Existing installations detected:[/yellow bold]\n"
-                    f"{detail_text}\n\n"
-                    f"[dim]These will be backed up to .tar.gz before any changes are made.\n"
-                    f"Your existing settings (hooks, MCP, deny rules) will be preserved and merged.[/dim]",
+                    f"[bold]Existing installations detected:[/bold]\n{details}\n\n"
+                    f"[dim]These will be backed up to .tar.gz before any changes are made. "
+                    f"Existing settings (hooks, MCP, deny rules) will be preserved and merged.[/dim]",
+                    classes="banner-warn",
                     id="existing-banner",
                 )
 
@@ -59,7 +64,9 @@ class InstallDirScreen(Screen):
             )
             yield Input(value=default, placeholder="/path/to/coding_agents", id="dir-input")
             yield Label("", id="dir-error")
-            yield Button("Next →", variant="primary", id="btn-next")
+
+            with Horizontal(classes="nav"):
+                yield Button("Next →", variant="primary", id="btn-next")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-next":
@@ -68,17 +75,18 @@ class InstallDirScreen(Screen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self._validate_and_proceed()
 
+    def action_next(self) -> None:
+        self._validate_and_proceed()
+
     def _validate_and_proceed(self) -> None:
         dir_input = self.query_one("#dir-input", Input)
         error_label = self.query_one("#dir-error", Label)
         path = Path(dir_input.value).expanduser()
 
-        # Validate path length (shebang limit — HPC only)
         if self.state.mode == "hpc" and len(str(path)) > 100:
             error_label.update("[red]Path too long (>100 chars). Shebang limit on HPC.[/red]")
             return
 
-        # Check parent is writable
         parent = path.parent
         if parent.exists() and not os.access(str(parent), os.W_OK):
             error_label.update(f"[red]Parent directory not writable: {parent}[/red]")
