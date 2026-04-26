@@ -103,11 +103,11 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
             log.write(f"\n[bold]{name}[/bold]")
 
     # --- 0. Backup existing installations ---
-    _phase("Checking for existing installations...")
+    _phase("🔍  Checking for existing installations…")
     await _backup_existing(state.agents, log)
 
     # --- create dir structure ---
-    _phase("Creating directory structure...")
+    _phase("📁  Creating directory structure…")
     for subdir in ["bin", "config", "config/mcp", "config/templates", "hooks",
                     "skills", "tools", "tools/bin", "logs", "node_modules"]:
         dry_run_mkdir(install_dir / subdir)
@@ -115,10 +115,10 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
     bundled = _bundled_dir()
 
     # --- 1. Install agents ---
-    _phase("Installing agents...")
+    _phase("📦  Installing agents…")
     for agent_key in state.agents:
         agent = AGENTS[agent_key]
-        log.write(f"  Installing {agent['display_name']}...")
+        log.write(f"  Installing {agent['display_name']}…")
         try:
             await _install_agent(agent_key, agent, install_dir, log)
             log.write(f"  [green]✓[/green] {agent['display_name']}")
@@ -127,44 +127,44 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
 
     # --- 2. Install tools ---
     if state.tools:
-        _phase("Installing tools...")
+        _phase("🔧  Installing tools…")
         await _install_tools(state.tools, install_dir, log)
 
     # --- 3. Install skills ---
     if state.skills:
-        _phase("Installing skills...")
+        _phase("🧠  Installing skills…")
         await _install_skills(state.skills, install_dir, bundled, log, mode=state.mode)
 
     # --- 4. Copy hooks ---
     if state.hooks:
-        _phase("Installing hooks...")
+        _phase("🪝  Installing hooks…")
         await _install_hooks(state.hooks, install_dir, bundled, log)
 
     # --- 5. Bootstrap per-user sandbox dirs (HPC only) ---
     if state.mode != "local":
-        _phase("Bootstrapping per-user sandbox dirs...")
+        _phase("🏗️   Bootstrapping per-user sandbox dirs…")
         await _bootstrap_user_dirs(state, log)
 
     # --- 6. Copy config files (mode-aware AGENTS.md) ---
-    _phase("Copying configuration files...")
+    _phase("📋  Copying configuration files…")
     await _install_config(install_dir, bundled, log, mode=state.mode)
 
     # --- 7. VSCode extension recommendations ---
-    _phase("VSCode extensions...")
+    _phase("🧩  VSCode extensions…")
     await _install_vscode_extensions(state, install_dir, log)
 
     # --- 8. Create sandbox wrapper scripts (HPC only) ---
     if state.mode != "local":
-        _phase("Creating sandbox wrapper scripts...")
+        _phase("🛡️   Creating sandbox wrapper scripts…")
         await _create_sandbox_wrappers(state, install_dir, log)
 
     # --- 8a. Emit managed policy files (Claude settings + Codex TOML) ---
     if state.mode != "local":
-        _phase("Emitting managed policy files...")
+        _phase("🔐  Emitting managed policy files…")
         await _emit_managed_policy(state, bundled, log)
 
     # --- 9. Shell integration ---
-    _phase("Setting up shell integration...")
+    _phase("🐚  Setting up shell integration…")
     modified = await _run_in_thread(
         lambda: inject_shell_block(
             install_dir,
@@ -177,11 +177,11 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
         log.write(f"  [green]✓[/green] Updated {f}")
 
     # --- 10. Smart-merge existing settings ---
-    _phase("Merging settings with existing configs...")
+    _phase("🔀  Merging settings with existing configs…")
     await _merge_existing_settings(state, install_dir, log)
 
     # --- 11. Save config ---
-    _phase("Saving config...")
+    _phase("💾  Saving config…")
     config = state.to_config_dict()
     mark_installed(config)
     log.write(f"  [green]✓[/green] Config saved to ~/.coding-agents.json")
@@ -415,41 +415,69 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
             log.write(f"  [red]✗ agent-browser: {exc}[/red]")
 
     if "entire" in tools:
-        # Reference: https://github.com/entireio/cli — installer is a
-        # `curl … | bash` script that occasionally prompts; we close stdin
-        # via run(stdin_devnull=True) (default) and cap the timeout at 90s
-        # so a prompt or network hiccup can't freeze the TUI for 5 minutes.
-        log.write("  Installing entire CLI...")
+        # Reference: https://github.com/entireio/cli (verified). The
+        # install.sh script itself is fully non-interactive — no `read`,
+        # no prompts. The hang we saw on HPC was missing curl timeouts
+        # inside the script, where curl would block forever on a
+        # firewalled GitHub egress. We hard-cap the whole thing with
+        # bash's `timeout` builtin AND inject curl timeout flags via the
+        # `curl` envelope. Telemetry-disable step is dropped because it
+        # touches the network and can hang the same way; users can run
+        # `entire enable --telemetry=false` themselves if they want.
+        log.write("  Installing entire CLI…")
+        cmd = (
+            "set -euo pipefail; "
+            # Pre-flight: bail fast if entire.io isn't reachable.
+            "if ! curl -sSfI --connect-timeout 10 --max-time 15 "
+            "https://entire.io/install.sh >/dev/null; then "
+            "  echo 'entire.io unreachable from this node — skipping' >&2; "
+            "  exit 99; "
+            "fi; "
+            # Then run the installer with the whole thing bounded.
+            "timeout 120 bash -c '"
+            "curl -fsSL --connect-timeout 15 --max-time 90 "
+            "https://entire.io/install.sh | bash"
+            "'"
+        )
         try:
             result = await _run_in_thread(
                 run,
-                ["bash", "-c", "curl -fsSL https://entire.io/install.sh | bash"],
+                ["bash", "-c", cmd],
                 check=False,
-                timeout=90,
+                timeout=150,
             )
-            if result.returncode != 0:
+            if result.returncode == 99:
+                log.write(
+                    "  [yellow]entire: entire.io unreachable from this HPC node — skipping. "
+                    "Install manually later if needed.[/yellow]"
+                )
+            elif result.returncode != 0:
                 stderr = (getattr(result, "stderr", "") or "").strip().splitlines()[-3:]
                 log.write(
                     f"  [yellow]entire installer exit {result.returncode}: "
-                    f"{' / '.join(stderr) or 'no stderr'}[/yellow]"
+                    f"{' / '.join(stderr) or 'no stderr'}. "
+                    f"Install manually later if needed: "
+                    f"https://github.com/entireio/cli[/yellow]"
                 )
-            entire_bin = shutil.which("entire")
-            if entire_bin:
-                await _run_in_thread(
-                    run,
-                    ["entire", "enable", "--telemetry=false"],
-                    check=False,
-                    timeout=30,
-                )
-                safe_symlink(Path(entire_bin), install_dir / "bin" / "entire")
-                log.write("  [green]✓[/green] entire CLI installed")
             else:
-                log.write(
-                    "  [yellow]entire: install script ran but `entire` not on PATH; "
-                    "skipping symlink. Install manually if you need it.[/yellow]"
-                )
+                entire_bin = shutil.which("entire")
+                if entire_bin:
+                    safe_symlink(Path(entire_bin), install_dir / "bin" / "entire")
+                    log.write("  [green]✓[/green] entire CLI installed")
+                    log.write(
+                        "  [dim]Run [bold]entire enable --telemetry=false[/bold] yourself "
+                        "to opt out of telemetry.[/dim]"
+                    )
+                else:
+                    log.write(
+                        "  [yellow]entire: install script reported success but `entire` "
+                        "not on PATH; skipping symlink.[/yellow]"
+                    )
         except subprocess.TimeoutExpired:
-            log.write("  [yellow]entire: install timed out (90s) — skipping[/yellow]")
+            log.write(
+                "  [yellow]entire: install exceeded 150s hard cap — skipping. "
+                "Install manually later if needed.[/yellow]"
+            )
         except Exception as exc:
             log.write(f"  [yellow]entire: {exc}[/yellow]")
 

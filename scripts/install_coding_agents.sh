@@ -151,9 +151,15 @@ echo
 echo -e "${BOLD}Smoke-test on a compute node (after install + claude login):${RESET}"
 echo "    srun --account=compgen --time=00:30:00 --mem=2G --gres=tmpspace:2G \\"
 echo "         --cpus-per-task=1 \\"
+echo "         --job-name=claude_managed_de_ridder_lab \\"
 echo "         --export=PATH,VIRTUAL_ENV,CONDA_PREFIX,CONDA_DEFAULT_ENV,LD_LIBRARY_PATH,HOME,USER,TERM,LANG,LC_ALL \\"
 echo "         --pty bash"
 echo "    agent-claude --version"
+echo
+echo "    # Lab convention: --job-name=<agent>_managed_de_ridder_lab"
+echo "    # The wrapper auto-renames the job if you forget — but setting it"
+echo "    # at submit time is cleaner and shows up correctly in squeue from"
+echo "    # the moment the job starts."
 echo
 echo -e "${BOLD}Update later (no re-clone):${RESET}"
 echo "    cd $PKG && git pull && source .venv/bin/activate && uv pip install -e ."

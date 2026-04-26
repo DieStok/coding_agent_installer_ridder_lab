@@ -14,7 +14,11 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --export=PATH,VIRTUAL_ENV,CONDA_PREFIX,CONDA_DEFAULT_ENV,LD_LIBRARY_PATH,HOME,USER,TERM,LANG,LC_ALL
 #SBATCH --output=/hpc/compgen/users/%u/agent-logs/%x-%j.out
-#SBATCH --job-name=agent-task
+#SBATCH --job-name=claude_managed_de_ridder_lab
+# Lab convention: <agent>_managed_de_ridder_lab — change the prefix to
+# match the agent in the body below (codex_managed_de_ridder_lab,
+# opencode_managed_de_ridder_lab, etc.). The agent-* wrapper auto-renames
+# the job at runtime if you forgot to set the right name here.
 
 # Activate your env BEFORE submitting this script (the --export above
 # carries the activation into the SLURM job; --export=NONE would break

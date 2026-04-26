@@ -11,9 +11,22 @@ AGENT_BINARY="{{AGENT_BINARY}}"
 if [ -z "${SLURM_JOB_ID:-}" ]; then
   echo "agent-${AGENT_NAME}: refusing to run on submit node (SLURM_JOB_ID unset)." >&2
   echo "  Try: srun --account=compgen --time=08:00:00 --mem=5G --gres=tmpspace:5G \\" >&2
-  echo "       --cpus-per-task=2 --export=PATH,VIRTUAL_ENV,CONDA_PREFIX,CONDA_DEFAULT_ENV,LD_LIBRARY_PATH \\" >&2
+  echo "       --cpus-per-task=2 --job-name=${AGENT_NAME}_managed_de_ridder_lab \\" >&2
+  echo "       --export=PATH,VIRTUAL_ENV,CONDA_PREFIX,CONDA_DEFAULT_ENV,LD_LIBRARY_PATH \\" >&2
   echo "       --pty bash" >&2
   exit 3
+fi
+
+# --- Job-name convention: <agent>_managed_de_ridder_lab (best effort) ---
+# Lab convention so anything started via this installer is identifiable
+# in `squeue` / accounting. Rename idempotently if the user forgot the
+# --job-name flag at srun/sbatch time. scontrol may not be allowed for
+# every user — tolerate failure silently.
+WANTED_JOB_NAME="${AGENT_NAME}_managed_de_ridder_lab"
+if [ "${SLURM_JOB_NAME:-}" != "$WANTED_JOB_NAME" ]; then
+  if command -v scontrol >/dev/null 2>&1; then
+    scontrol update jobid="$SLURM_JOB_ID" jobname="$WANTED_JOB_NAME" >/dev/null 2>&1 || true
+  fi
 fi
 
 # --- Precondition: SIF readable ---

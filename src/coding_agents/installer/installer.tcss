@@ -1,16 +1,36 @@
-/* coding-agents installer — TUI styles.
+/* coding-agents installer — minimalist monochrome.
  *
- * Design principles:
- *   - Lean on the chosen Textual theme (nord by default) for color harmony.
- *     Don't add custom backgrounds; use borders and text color only.
- *   - One accent color at a time: titles + clickable links use $accent.
- *     Banners use border-left only, no fill.
- *   - .nav docks to the bottom of every step container so navigation
- *     buttons are always reachable even on small terminals.
+ * Rules:
+ *   - Black background, white text, white borders. Everywhere.
+ *   - No coloured background fills, no banners with tinted blocks.
+ *   - Only buttons carry colour, via Textual's variant=primary/success/error.
+ *   - Scrollbars: white track on black.
  */
+
+* {
+    scrollbar-color:        white black;
+    scrollbar-color-hover:  white black;
+    scrollbar-color-active: white black;
+    scrollbar-background:        black;
+    scrollbar-background-hover:  black;
+    scrollbar-background-active: black;
+    scrollbar-corner-color: black;
+}
 
 Screen {
     align: center middle;
+    background: black;
+    color: white;
+}
+
+Header {
+    background: black;
+    color: white;
+}
+
+Footer {
+    background: black;
+    color: white;
 }
 
 #step-container {
@@ -18,70 +38,60 @@ Screen {
     max-width: 100%;
     height: auto;
     max-height: 90%;
-    border: round $primary 60%;
+    background: black;
+    color: white;
+    border: solid white;
     padding: 1 2;
     overflow-y: auto;
 }
 
 .step-title {
     text-style: bold;
-    color: $accent;
-    border-bottom: tall $primary 40%;
+    color: white;
+    border-bottom: solid white;
     padding: 0 0 1 0;
     margin: 0 0 1 0;
     width: 100%;
 }
 
 .step-description {
-    color: $text-muted;
+    color: white;
     margin: 0 0 1 0;
 }
 
 .section-heading {
     text-style: bold;
-    color: $primary;
+    color: white;
     margin: 1 0 0 0;
 }
 
 .section-body {
     margin: 0 0 1 1;
+    color: white;
 }
 
 .muted {
-    color: $text-muted;
-    text-style: italic;
+    color: white 70%;
 }
 
-.success { color: $success; }
-.warning { color: $warning; text-style: bold; }
-.error   { color: $error;   text-style: bold; }
-
-/* Banners: just a coloured left edge — no background fill, so they don't
- * overpower the rest of the panel. */
-.banner-info {
-    border-left: thick $primary;
-    padding: 0 1;
-    margin: 0 0 1 0;
-}
-
-.banner-warn {
-    border-left: thick $warning;
-    padding: 0 1;
-    margin: 0 0 1 0;
-}
-
+/* Banners reduced to a single white left bar; no fill. */
+.banner-info,
+.banner-warn,
 .banner-success {
-    border-left: thick $success;
+    background: black;
+    color: white;
+    border-left: thick white;
     padding: 0 1;
     margin: 0 0 1 0;
 }
 
-/* Nav row: dock bottom so Back/Next/Install/Done are always reachable. */
+/* Nav row */
 .nav {
     dock: bottom;
     height: 3;
     padding: 1 0 0 0;
     align: right middle;
+    background: black;
 }
 
 .nav Button {
@@ -89,16 +99,24 @@ Screen {
     min-width: 12;
 }
 
+/* Inputs */
 Input {
+    background: black;
+    color: white;
+    border: solid white;
     margin: 0 0 1 0;
 }
 
 Input:focus {
-    border: tall $accent;
+    border: solid white;
+    background: black;
 }
 
+/* Selection lists */
 SelectionList {
-    border: tall $primary 30%;
+    background: black;
+    color: white;
+    border: solid white;
     padding: 0 1;
     margin: 0 0 1 0;
     height: auto;
@@ -106,23 +124,45 @@ SelectionList {
 }
 
 RadioSet {
+    background: black;
+    color: white;
+    border: solid white;
     margin: 0 0 1 0;
 }
 
-#install-log {
-    border: tall $primary 30%;
+RadioButton {
+    background: black;
+    color: white;
+}
+
+Switch {
+    background: black;
+}
+
+/* Logs */
+#install-log,
+#verbose-log {
+    background: black;
+    color: white;
+    border: solid white;
     height: 12;
     margin: 1 0;
 }
 
 #verbose-log {
-    border: tall $primary 30%;
-    height: 12;
     margin: 0 0 1 0;
-    color: $text-muted;
+    color: white 80%;
 }
 
 #install-progress {
     margin: 0 0 1 0;
     width: 100%;
 }
+
+ProgressBar > Bar {
+    color: white;
+    background: black;
+}
+
+/* Default Buttons keep their variant colour (primary=blue, success=green,
+ * error=red) — that's the only colour in the UI on purpose. */

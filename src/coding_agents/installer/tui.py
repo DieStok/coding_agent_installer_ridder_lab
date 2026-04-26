@@ -11,10 +11,11 @@ from textual.widgets import Footer, Header
 from coding_agents.config import HPC_ONLY_HOOKS, HPC_ONLY_SKILLS, load_config
 from coding_agents.installer.state import InstallerState
 
-# nord = calm blue/gray palette; less visually noisy than the default
-# "textual-dark" theme. Override with the env var if you prefer another
-# built-in theme (catppuccin-mocha, gruvbox, tokyo-night, dracula, ...).
-DEFAULT_THEME = os.environ.get("CODING_AGENTS_THEME", "nord")
+# Minimalist monochrome — black bg, white borders, white text. Set via the
+# env var if you want a built-in Textual theme instead (e.g. nord,
+# catppuccin-mocha, gruvbox, tokyo-night, dracula). The empty default lets
+# the CSS-only monochrome design show through.
+DEFAULT_THEME = os.environ.get("CODING_AGENTS_THEME", "")
 
 
 class CodingAgentsInstaller(App):
@@ -51,11 +52,14 @@ class CodingAgentsInstaller(App):
         self.existing_inventory = scan_existing()
 
     def on_mount(self) -> None:
-        # Apply the theme on mount; older Textual versions silently ignore it.
-        try:
-            self.theme = DEFAULT_THEME
-        except Exception:
-            pass
+        # Apply the override theme only if the user explicitly asked for one
+        # via $CODING_AGENTS_THEME. Otherwise we let the monochrome CSS run
+        # without a competing theme palette behind it.
+        if DEFAULT_THEME:
+            try:
+                self.theme = DEFAULT_THEME
+            except Exception:
+                pass
 
         from coding_agents.installer.screens.install_dir import InstallDirScreen
 

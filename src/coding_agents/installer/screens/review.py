@@ -16,6 +16,12 @@ from coding_agents.installer.screens.install_dir import TOTAL_STEPS
 from coding_agents.installer.state import InstallerState
 
 
+class SelectableRichLog(RichLog):
+    """RichLog with text selection enabled so the user can copy log lines."""
+
+    ALLOW_SELECT = True
+
+
 class ReviewScreen(Screen):
     """Step 6 — Review all selections and execute the install."""
 
@@ -61,12 +67,22 @@ class ReviewScreen(Screen):
             yield Static(summary, classes="banner-info")
             yield ProgressBar(total=100, show_eta=False, id="install-progress")
             yield Static("[bold]Install log[/bold]", classes="section-heading")
-            yield RichLog(id="install-log", wrap=True, markup=True)
+            yield SelectableRichLog(id="install-log", wrap=True, markup=True)
             yield Static(
                 "[bold]Verbose output[/bold] [dim](subprocess stdout/stderr)[/dim]",
                 classes="section-heading",
             )
-            yield RichLog(id="verbose-log", wrap=False, markup=False, max_lines=2000)
+            yield SelectableRichLog(
+                id="verbose-log", wrap=False, markup=False, max_lines=2000
+            )
+            yield Static(
+                "[dim]To copy text: click-drag to select. If selection is "
+                "fighting the TUI, hold [bold]Option[/bold] (Mac) / "
+                "[bold]Shift[/bold] (Linux) and drag — that bypasses the "
+                "TUI's mouse handler and uses your terminal's native "
+                "selection.[/dim]",
+                classes="muted",
+            )
 
             with Horizontal(classes="nav"):
                 yield Button("← Back", id="btn-back")
