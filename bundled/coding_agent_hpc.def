@@ -1,11 +1,13 @@
 Bootstrap: docker
-From: ubuntu:22.04
+# Ubuntu 24.04 LTS: ships python3.12 in main (22.04 only has 3.10 + deadsnakes PPA).
+# 24.04's newer glibc is fine for conda envs built on CentOS 7+ / RHEL 8+ hosts.
+From: ubuntu:24.04
 
 %labels
     org.label-schema.schema-version 1.0
     org.label-schema.name coding-agents-hpc
     coding-agents.build_date BUILD_DATE_PLACEHOLDER
-    coding-agents.versions.ubuntu 22.04
+    coding-agents.versions.ubuntu 24.04
     coding-agents.versions.node 20.x-LTS
     coding-agents.versions.python 3.12.x
     coding-agents.versions.gitleaks 8.21.2
