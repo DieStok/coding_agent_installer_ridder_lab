@@ -119,16 +119,67 @@ fi
 [ -n "${LD_LIBRARY_PATH:-}" ] && export APPTAINERENV_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
 
 # --- Per-provider API key passthrough from $AGENT_SECRETS_DIR (security M5) ---
-_export_key_if_present() {
-  local var_name="$1" file_name="$2"
-  if [ -r "$AGENT_SECRETS_DIR/$file_name" ]; then
-    export "APPTAINERENV_${var_name}=$(<"$AGENT_SECRETS_DIR/$file_name")"
-  fi
-}
+#
+# Two mechanisms, both load into the sandbox via apptainer's APPTAINERENV_*
+# convention:
+#
+# 1. Single-value credential files — one secret per file. The file's name
+#    (uppercased) becomes the env var name. We look for these patterns:
+#       *_api_key         → <NAME>_API_KEY        (most providers)
+#       *_token           → <NAME>_TOKEN          (HF, GitHub, Anthropic OAuth)
+#       *_endpoint        → <NAME>_ENDPOINT       (Azure OpenAI, etc.)
+#       *_base_url        → <NAME>_BASE_URL       (Azure OpenAI base URL)
+#       *_project         → <NAME>_PROJECT        (GCP)
+#       *_location        → <NAME>_LOCATION       (GCP region)
+#       *_resource_name   → <NAME>_RESOURCE_NAME  (Azure)
+#
+#    Drop the file in $AGENT_SECRETS_DIR with mode 0600. Examples:
+#       openrouter_api_key, anthropic_api_key, openai_api_key,
+#       gemini_api_key, groq_api_key, deepseek_api_key, mistral_api_key,
+#       xai_api_key, cohere_api_key, fireworks_api_key, perplexity_api_key,
+#       cerebras_api_key, opencode_api_key, kimi_api_key, zai_api_key,
+#       minimax_api_key, ai_gateway_api_key, copilot_github_token,
+#       gh_token, github_token, hf_token, anthropic_oauth_token,
+#       azure_openai_api_key, azure_openai_endpoint, azure_openai_base_url,
+#       google_cloud_api_key
+#
+# 2. provider.env — KEY=VALUE pairs, one per line, # for comments. Use
+#    this for multi-variable configs that don't fit the patterns above
+#    (Azure resource names, GCP project IDs, custom base URLs, …).
+#       AZURE_OPENAI_RESOURCE_NAME=mycompany-openai
+#       GOOGLE_CLOUD_PROJECT=my-project-123
+#       GOOGLE_CLOUD_LOCATION=us-central1
 if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
-  _export_key_if_present ANTHROPIC_API_KEY anthropic_api_key
-  _export_key_if_present OPENAI_API_KEY    openai_api_key
-  _export_key_if_present GEMINI_API_KEY    gemini_api_key
+  shopt -s nullglob
+  for keyfile in \
+      "$AGENT_SECRETS_DIR"/*_api_key \
+      "$AGENT_SECRETS_DIR"/*_token \
+      "$AGENT_SECRETS_DIR"/*_endpoint \
+      "$AGENT_SECRETS_DIR"/*_base_url \
+      "$AGENT_SECRETS_DIR"/*_project \
+      "$AGENT_SECRETS_DIR"/*_location \
+      "$AGENT_SECRETS_DIR"/*_resource_name; do
+    [ -r "$keyfile" ] || continue
+    name=$(basename "$keyfile")
+    var_name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
+    value=$(<"$keyfile")
+    # Strip trailing newline so string-equality checks aren't tripped up.
+    export "APPTAINERENV_${var_name}=${value%$'\n'}"
+  done
+  shopt -u nullglob
+
+  if [ -r "$AGENT_SECRETS_DIR/provider.env" ]; then
+    while IFS='=' read -r key val; do
+      key="${key#"${key%%[![:space:]]*}"}"   # trim leading whitespace
+      key="${key%"${key##*[![:space:]]}"}"   # trim trailing whitespace
+      [ -z "$key" ] && continue
+      case "$key" in \#*) continue ;; esac
+      val="${val%$'\n'}"
+      val="${val#\"}"; val="${val%\"}"       # strip surrounding "
+      val="${val#\'}"; val="${val%\'}"       # strip surrounding '
+      export "APPTAINERENV_${key}=$val"
+    done < "$AGENT_SECRETS_DIR/provider.env"
+  fi
 fi
 
 # --- Per-session credential copy (Claude only — others use API keys above) ---

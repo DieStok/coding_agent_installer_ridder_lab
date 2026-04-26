@@ -119,9 +119,13 @@ def test_wrapper_contains_security_critical_strings():
     assert "/opt/python/" in text, "system-python prefix allowlist required"
 
     # M5: per-agent API key passthrough from $AGENT_SECRETS_DIR
-    assert "_export_key_if_present" in text
-    assert "anthropic_api_key" in text
-    assert "openai_api_key" in text
+    # (Auto-discovery glob over *_api_key / *_token / *_endpoint / etc.
+    # replaced the original hardcoded `_export_key_if_present` helper so
+    # adding a new provider doesn't require a wrapper edit.)
+    assert 'APPTAINERENV_' in text, "must export keys via APPTAINERENV_* (M5)"
+    assert '"$AGENT_SECRETS_DIR"/*_api_key' in text, "must scan secrets dir for *_api_key (M5)"
+    assert '"$AGENT_SECRETS_DIR"/*_token' in text, "must scan secrets dir for *_token (M5)"
+    assert 'provider.env' in text, "must support provider.env for multi-var configs (M5)"
 
     # Wrapper exit codes covered
     for code, hint in (

@@ -30,7 +30,13 @@ From: ubuntu:24.04
     apt-get install -y --no-install-recommends \
         ca-certificates curl git jq unzip tar gnupg \
         python3.12 python3.12-venv python3-pip \
-        build-essential file
+        build-essential file \
+        ripgrep fd-find
+    # fd-find ships the binary as `fdfind` on Debian/Ubuntu to avoid
+    # collision with another package; symlink it as `fd` so Pi (and
+    # anything else that looks for `fd` on PATH) finds it without
+    # downloading its own copy on every invocation.
+    ln -sf /usr/bin/fdfind /usr/local/bin/fd
     rm -rf /var/lib/apt/lists/*
 
     # Node 20 LTS (NodeSource)
