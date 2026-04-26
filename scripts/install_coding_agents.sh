@@ -10,9 +10,18 @@
 #     bash /hpc/compgen/users/shared/agent/bin/install_coding_agents.sh
 #     # then follow the printed "Next steps".
 #
-# Override the clone target:
-#     TARGET=/hpc/compgen/users/$USER/Software/coding_agents \
+# Override the clone target (defaults to the project area, NOT $HOME, to avoid
+# eating into the small home-dir quota; matches the lab pattern of putting
+# software in /hpc/compgen/users/$USER/Software/):
+#     TARGET=$HOME/coding_agents \
 #       bash /hpc/compgen/users/shared/agent/bin/install_coding_agents.sh
+#
+# Per-user footprint after running everything:
+#   - This bootstrap (repo + .venv): ~23 MB total. Lives at $TARGET.
+#   - `coding-agents install` (TUI, separate step): adds ~200-300 MB
+#     (codex/opencode/pi npm installs) at the install_dir the user picks.
+#   - SIF: lives at /hpc/compgen/users/shared/agent/current.sif (lab-shared,
+#     not duplicated per user).
 #
 # What it does (each step bails cleanly on failure):
 #   1. Verifies `uv` is on PATH (prints install command if not).
@@ -26,7 +35,10 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/DieStok/coding_agent_installer_ridder_lab.git"
-TARGET="${TARGET:-$HOME/coding_agents}"
+# Default to the project area (matches the lab's /hpc/compgen/users/$USER/Software/
+# pattern) instead of $HOME to avoid HPC home-dir quota pressure. Override with
+# TARGET=$HOME/coding_agents bash install_coding_agents.sh
+TARGET="${TARGET:-/hpc/compgen/users/$USER/Software/coding_agents_installer}"
 PKG_SUBDIR="coding-agents-package"
 
 # --- Colors only on a real terminal ---
@@ -50,6 +62,19 @@ fatal() { echo -e "${RED}ERROR:${RESET} $1" >&2; exit 1; }
 
 banner
 echo "Target install dir: $TARGET"
+echo "(Override with: TARGET=/some/other/path bash install_coding_agents.sh)"
+
+# --- 0. Sanity-check the target parent ---
+TARGET_PARENT=$(dirname "$TARGET")
+if [ ! -d "$TARGET_PARENT" ]; then
+    echo
+    warn "Parent dir $TARGET_PARENT doesn't exist yet."
+    echo "  Creating it..."
+    mkdir -p "$TARGET_PARENT" || fatal "could not create $TARGET_PARENT — pick a writable TARGET= override."
+fi
+if [ ! -w "$TARGET_PARENT" ]; then
+    fatal "Parent dir $TARGET_PARENT is not writable. Pick a writable location with TARGET=/some/other/path."
+fi
 
 # --- 1. uv on PATH ---
 step "Checking uv availability"
