@@ -40,7 +40,6 @@ DEFAULT_CONFIG = {
         "compound-engineering",
         "scientific-agent-skills",
         "autoresearch",
-        "crawl4ai",
         "hpc-cluster",
     ],
     "hooks": [
@@ -50,7 +49,7 @@ DEFAULT_CONFIG = {
         "lint_runner",
         "hpc_validator",
     ],
-    "tools": ["crawl4ai", "agent-browser", "linters", "entire"],
+    "tools": ["linters", "entire"],
     "vscode_extensions": True,
     "mode": "hpc",
     "installed_at": "",

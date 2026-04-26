@@ -59,7 +59,6 @@ def test_local_mode_defaults_no_hpc_skills():
 
     local_skills = [s for s in DEFAULT_SKILLS if s not in HPC_ONLY_SKILLS]
     assert "hpc-cluster" not in local_skills
-    assert "crawl4ai" in local_skills
     assert "compound-engineering" in local_skills
 
 
