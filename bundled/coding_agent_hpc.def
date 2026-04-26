@@ -60,8 +60,13 @@ From: ubuntu:24.04
       ln -sf "/opt/agents/node_modules/.bin/$bin" "/usr/local/bin/$bin"
     done
 
-    # agentuser (uid 1000) with empty $HOME
-    useradd -u 1000 -m -s /bin/bash agentuser
+    # agentuser with empty $HOME. UID is unpinned because:
+    #  - Ubuntu 24.04 ships with `ubuntu` already at UID 1000.
+    #  - Apptainer in unprivileged mode (--no-privs) runs the container
+    #    as the *host* user's UID, not the SIF's baked UID — so the
+    #    number is decorative. What matters is the /home/agentuser/
+    #    path the wrapper binds credentials into.
+    useradd -m -s /bin/bash agentuser
     install -d -m 0700 -o agentuser -g agentuser /home/agentuser/.claude
 
     # Bake resolved versions into /etc/agent-versions for runtime read-back
