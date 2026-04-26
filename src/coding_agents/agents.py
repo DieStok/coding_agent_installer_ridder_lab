@@ -62,7 +62,12 @@ AGENTS: dict[str, dict] = {
         "deny_rules_format": None,
         "mcp_format": "pi",
         "vscode_extension": "pi0.pi-vscode",
-        "post_install": ["pi install npm:pi-ask-user", "pi install npm:pi-subagents"],
+        "post_install": [
+            "pi install npm:pi-ask-user",
+            "pi install npm:pi-subagents",
+            "pi install npm:pi-web-access",
+            "pi install npm:pi-mcp-adapter",
+        ],
     },
     "gemini": {
         "display_name": "Gemini CLI",
