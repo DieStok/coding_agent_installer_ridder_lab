@@ -75,6 +75,15 @@ def install(
             "Useful when developing this installer against your own working agent install."
         ),
     ),
+    developer: bool = typer.Option(
+        False,
+        "--developer",
+        help=(
+            "Show the full skills/hooks/tools pickers so you can customize what gets "
+            "installed. Without this flag the TUI is a one-stop-shop and just shows "
+            "you the lab default lists with links, with no per-item toggles."
+        ),
+    ),
 ) -> None:
     """Interactive TUI installer for coding agents."""
     import sys
@@ -90,6 +99,9 @@ def install(
             raise typer.Exit(2)
         console.print(f"[yellow]Excluding agents from install:[/yellow] {sorted(excluded)}")
 
+    if developer:
+        console.print("[yellow]Developer mode:[/yellow] full skills/hooks/tools pickers enabled.")
+
     if not sys.stdin.isatty():
         console.print("[red]Error:[/red] coding-agents install requires an interactive terminal.")
         raise typer.Exit(1)
@@ -97,7 +109,7 @@ def install(
     from coding_agents.installer.tui import CodingAgentsInstaller
 
     mode = "local" if local else "hpc"
-    tui = CodingAgentsInstaller(mode=mode, excluded_agents=excluded)
+    tui = CodingAgentsInstaller(mode=mode, excluded_agents=excluded, developer=developer)
     tui.run()
 
 

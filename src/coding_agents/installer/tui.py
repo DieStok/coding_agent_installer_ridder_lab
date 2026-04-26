@@ -30,7 +30,12 @@ class CodingAgentsInstaller(App):
         Binding("ctrl+c", "quit", "Quit", show=False, priority=True),
     ]
 
-    def __init__(self, mode: str = "hpc", excluded_agents: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        mode: str = "hpc",
+        excluded_agents: set[str] | None = None,
+        developer: bool = False,
+    ) -> None:
         super().__init__()
         existing = load_config()
         if existing.get("install_dir"):
@@ -46,6 +51,11 @@ class CodingAgentsInstaller(App):
         self.excluded_agents: set[str] = set(excluded_agents or set())
         if self.excluded_agents:
             self.state.agents = [a for a in self.state.agents if a not in self.excluded_agents]
+
+        # When False (default), Step 4 (tools) and Step 5 (skills/hooks) render
+        # as info-only screens with clickable links. When True (--developer),
+        # the full SelectionList pickers come back so you can customize.
+        self.developer: bool = developer
 
         from coding_agents.detect_existing import scan_existing
 
