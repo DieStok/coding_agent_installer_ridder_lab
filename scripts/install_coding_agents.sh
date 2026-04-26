@@ -10,16 +10,17 @@
 #     bash /hpc/compgen/users/shared/agent/bin/install_coding_agents.sh
 #     # then follow the printed "Next steps".
 #
-# Override the clone target (defaults to the project area, NOT $HOME, to avoid
-# eating into the small home-dir quota; matches the lab pattern of putting
-# software in /hpc/compgen/users/$USER/Software/):
-#     TARGET=$HOME/coding_agents \
+# Override the clone target (default is $HOME/coding_agents — small enough
+# at ~23 MB total that it's fine in home; override to a project-area path
+# if you prefer):
+#     TARGET=/hpc/compgen/users/$USER/Software/coding_agents_installer \
 #       bash /hpc/compgen/users/shared/agent/bin/install_coding_agents.sh
 #
 # Per-user footprint after running everything:
 #   - This bootstrap (repo + .venv): ~23 MB total. Lives at $TARGET.
 #   - `coding-agents install` (TUI, separate step): adds ~200-300 MB
-#     (codex/opencode/pi npm installs) at the install_dir the user picks.
+#     (codex/opencode/pi npm installs) at the install_dir the user picks
+#     (default /hpc/compgen/users/$USER/coding_agents/).
 #   - SIF: lives at /hpc/compgen/users/shared/agent/current.sif (lab-shared,
 #     not duplicated per user).
 #
@@ -35,10 +36,11 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/DieStok/coding_agent_installer_ridder_lab.git"
-# Default to the project area (matches the lab's /hpc/compgen/users/$USER/Software/
-# pattern) instead of $HOME to avoid HPC home-dir quota pressure. Override with
-# TARGET=$HOME/coding_agents bash install_coding_agents.sh
-TARGET="${TARGET:-/hpc/compgen/users/$USER/Software/coding_agents_installer}"
+# Default to $HOME — the bootstrap is small (~23 MB total) so it fits
+# comfortably in home quotas. Override with
+# TARGET=/hpc/compgen/users/$USER/Software/coding_agents_installer
+# if you'd rather keep it on the project area.
+TARGET="${TARGET:-$HOME/coding_agents}"
 PKG_SUBDIR="coding-agents-package"
 
 # --- Colors only on a real terminal ---
