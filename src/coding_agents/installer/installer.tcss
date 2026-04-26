@@ -1,19 +1,16 @@
 /* coding-agents installer — TUI styles.
  *
- * Layout pattern for every step screen:
- *   Vertical #step-container
- *     Label .step-title          <- bold, accent-coloured banner
- *     Static .step-description   <- muted helper text
- *     <screen-specific body>     <- scrolls if too tall
- *     Horizontal .nav            <- docked to bottom, always reachable
- *
- * The .nav docking is the fix for the "I can't see/reach the Next button"
- * problem on small terminals.
+ * Design principles:
+ *   - Lean on the chosen Textual theme (nord by default) for color harmony.
+ *     Don't add custom backgrounds; use borders and text color only.
+ *   - One accent color at a time: titles + clickable links use $accent.
+ *     Banners use border-left only, no fill.
+ *   - .nav docks to the bottom of every step container so navigation
+ *     buttons are always reachable even on small terminals.
  */
 
 Screen {
     align: center middle;
-    background: $surface;
 }
 
 #step-container {
@@ -21,8 +18,7 @@ Screen {
     max-width: 100%;
     height: auto;
     max-height: 90%;
-    border: round $accent;
-    background: $panel;
+    border: round $primary 60%;
     padding: 1 2;
     overflow-y: auto;
 }
@@ -30,8 +26,8 @@ Screen {
 .step-title {
     text-style: bold;
     color: $accent;
-    background: $boost;
-    padding: 0 1;
+    border-bottom: tall $primary 40%;
+    padding: 0 0 1 0;
     margin: 0 0 1 0;
     width: 100%;
 }
@@ -53,51 +49,39 @@ Screen {
 
 .muted {
     color: $text-muted;
+    text-style: italic;
 }
 
-.success {
-    color: $success;
-}
+.success { color: $success; }
+.warning { color: $warning; text-style: bold; }
+.error   { color: $error;   text-style: bold; }
 
-.warning {
-    color: $warning;
-    text-style: bold;
-}
-
-.error {
-    color: $error;
-    text-style: bold;
-}
-
+/* Banners: just a coloured left edge — no background fill, so they don't
+ * overpower the rest of the panel. */
 .banner-info {
-    background: $primary 20%;
     border-left: thick $primary;
-    padding: 1 2;
+    padding: 0 1;
     margin: 0 0 1 0;
 }
 
 .banner-warn {
-    background: $warning 20%;
     border-left: thick $warning;
-    padding: 1 2;
+    padding: 0 1;
     margin: 0 0 1 0;
 }
 
 .banner-success {
-    background: $success 20%;
     border-left: thick $success;
-    padding: 1 2;
+    padding: 0 1;
     margin: 0 0 1 0;
 }
 
-/* Horizontal nav row: always dock to the bottom of the step container so
- * Back/Next/Install/Done are visible even when the body content overflows. */
+/* Nav row: dock bottom so Back/Next/Install/Done are always reachable. */
 .nav {
     dock: bottom;
     height: 3;
     padding: 1 0 0 0;
     align: right middle;
-    background: $panel;
 }
 
 .nav Button {
@@ -105,7 +89,6 @@ Screen {
     min-width: 12;
 }
 
-/* Inputs */
 Input {
     margin: 0 0 1 0;
 }
@@ -114,9 +97,8 @@ Input:focus {
     border: tall $accent;
 }
 
-/* Selection lists with breathing room */
 SelectionList {
-    border: tall $surface-lighten-1;
+    border: tall $primary 30%;
     padding: 0 1;
     margin: 0 0 1 0;
     height: auto;
@@ -127,10 +109,8 @@ RadioSet {
     margin: 0 0 1 0;
 }
 
-/* Install log: bigger so progress is visible */
 #install-log {
-    border: tall $surface-lighten-1;
+    border: tall $primary 30%;
     height: 18;
     margin: 1 0;
-    background: $surface-darken-1;
 }

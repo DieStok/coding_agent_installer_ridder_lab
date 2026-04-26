@@ -46,10 +46,13 @@ def _ext_links_markup(extensions: list[tuple[str, str]]) -> str:
         vscode_uri = f"vscode:extension/{ext_id}"
         # URLs are quoted so Textual's markup parser doesn't choke on the
         # 'vscode:' colon (which it would otherwise read as a markup separator).
+        # Inner [u $accent] gives a visible affordance — the OSC-8 hyperlink
+        # alone renders as plain text in most terminal styles.
         lines.append(
-            f"  • [bold]{ext_id}[/bold]  ([italic]{agent_key}[/italic])\n"
-            f'      [link="{vscode_uri}"]Open in VSCode[/link]'
-            f'   ·   [link="{marketplace}"]Marketplace page[/link]'
+            f"  • [bold]{ext_id}[/bold]  [dim]({agent_key})[/dim]\n"
+            f'      [link="{vscode_uri}"][u $accent]Open in VSCode[/u $accent][/link]'
+            f'   [dim]·[/dim]   '
+            f'[link="{marketplace}"][u $accent]Marketplace page[/u $accent][/link]'
         )
     return "\n".join(lines)
 
