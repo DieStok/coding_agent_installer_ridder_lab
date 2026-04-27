@@ -50,21 +50,44 @@ def _sync_vscode_wrapper_settings(install_dir: Path, agents: list[str]) -> None:
     VSCode rewrites settings.json on certain UI actions; a periodic re-emit
     via ``coding-agents sync`` keeps our wrapper keys present afterwards.
     Idempotent — byte-identical output when nothing has drifted.
+
+    If no settings.json exists locally (typical when VSCode Settings Sync is
+    on — the file is held in cloud sync, not on the cluster), print the
+    exact JSONC the user can paste manually.
     """
     wrappable = {"claude", "codex", "opencode", "pi"}
     selected = sorted(set(agents) & wrappable)
     if not selected:
         return
     console.print("[bold]VSCode wrapper hooks:[/bold]")
-    from coding_agents.installer.policy_emit import emit_managed_vscode_settings
+    from coding_agents.installer.policy_emit import (
+        _vscode_wrapper_keys,
+        emit_managed_vscode_settings,
+    )
     target = emit_managed_vscode_settings(install_dir, selected)
-    if target is None:
-        console.print(
-            "  [yellow]⚠ No VSCode settings.json found — connect VSCode to "
-            "this host then re-run `coding-agents sync`.[/yellow]"
-        )
-    else:
+    if target is not None:
         console.print(f"  [green]✓[/green] re-emitted to {target}")
+        return
+
+    # No settings.json on disk → most often Settings Sync is on. Print the
+    # block to paste manually.
+    console.print(
+        "  [yellow]⚠ No VSCode settings.json found on this host.[/yellow]\n"
+        "    [dim]Likely cause: VSCode Settings Sync is enabled, so the file "
+        "lives in cloud sync rather than ~/.vscode-server/. Open the Command "
+        "Palette → 'Preferences: Open User Settings (JSON)' and paste the "
+        "block below at the top level of the JSON object:[/dim]"
+    )
+    keys = _vscode_wrapper_keys(install_dir, selected)
+    snippet = json.dumps(keys, indent=2)
+    # Indent each line for visual separation in the terminal output.
+    indented = "\n".join("    " + line for line in snippet.splitlines())
+    console.print(f"\n[bold cyan]{indented}[/bold cyan]\n")
+    console.print(
+        "    [dim]After pasting + saving, the four sidebars (Claude, Codex, "
+        "OpenCode, Pi) will route through the SIF wrapper. Re-run "
+        "`coding-agents sync` to verify the keys persisted.[/dim]"
+    )
 
 
 def _sync_agents_md(install_dir: Path, agents: list[str], home: Path) -> None:
@@ -134,7 +157,26 @@ def _sync_hooks(install_dir: Path, agents: list[str], hooks: list[str]) -> None:
         if agent["hooks_support"] is True and key == "claude":
             _wire_claude_hooks(install_dir, hooks)
         elif agent["hooks_support"] == "experimental" and key == "codex":
-            console.print(f"  [dim]Codex hooks: experimental, manual setup recommended[/dim]")
+            _wire_codex_hooks(install_dir, hooks)
+
+
+def _wire_codex_hooks(install_dir: Path, hooks: list[str]) -> None:
+    """Emit ~/.codex/hooks.json + set [features] codex_hooks = true.
+
+    The Codex hooks API is marked experimental upstream; if a hook script
+    misbehaves under Codex's stdin protocol, set ``[features] codex_hooks
+    = false`` in ~/.codex/config.toml to disable.
+    """
+    from coding_agents.installer.policy_emit import install_codex_hooks
+    target = install_codex_hooks(install_dir, hooks)
+    if target is None:
+        console.print("  [dim]Codex hooks: no SessionStart/Stop scripts mapped[/dim]")
+        return
+    console.print(f"  [green]✓[/green] Codex hooks: {target}")
+    console.print(
+        "    [dim]Apptainer's bind-mounts already constrain blast radius "
+        "to the SIF; hooks add prompt-time checks on top.[/dim]"
+    )
 
 
 def _wire_claude_hooks(install_dir: Path, hooks: list[str]) -> None:
@@ -182,7 +224,20 @@ def _sync_deny_rules(install_dir: Path, agents: list[str]) -> None:
             console.print(f"  [green]✓[/green] Codex sandbox config")
 
         elif fmt == "opencode":
-            console.print(f"  [dim]OpenCode deny rules: manual config recommended[/dim]")
+            _apply_opencode_permissions(canonical_rules)
+            console.print(f"  [green]✓[/green] OpenCode permissions")
+            console.print(
+                "    [dim]Apptainer enforces a small blast radius via "
+                "bind-mounts; the permission rules add ask/deny prompts "
+                "on top so the agent can't run lab-banned commands "
+                "(e.g. `rm -rf`, `chmod -R`) without your explicit OK.[/dim]"
+            )
+
+
+def _apply_opencode_permissions(rules: list[str]) -> None:
+    """Write the lab-deny patterns into ~/.config/opencode/opencode.json."""
+    from coding_agents.installer.policy_emit import install_opencode_permissions
+    install_opencode_permissions(rules)
 
 
 def _apply_claude_deny(rules: list[str]) -> None:

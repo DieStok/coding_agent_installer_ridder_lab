@@ -972,6 +972,21 @@ async def _emit_managed_policy(state, bundled: Path, log: RichLog) -> None:
             target = home / ".codex" / "config.toml"
             install_codex_deny_paths(deny_rules_path, target)
             log.write(f"  [green]✓[/green] Codex sandbox config: {target}")
+        # Codex hooks (experimental upstream — feature flag gates them).
+        from coding_agents.installer.policy_emit import install_codex_hooks
+        hooks_target = install_codex_hooks(state.install_path, state.hooks)
+        if hooks_target is not None:
+            log.write(f"  [green]✓[/green] Codex hooks: {hooks_target}")
+
+    if "opencode" in state.agents and deny_rules_path.exists():
+        # OpenCode v1.1.1+ unified `permission` schema. Apptainer constrains
+        # blast radius via bind-mounts; permission rules add prompt-time gates.
+        from coding_agents.installer.policy_emit import install_opencode_permissions
+        deny_data = json.loads(deny_rules_path.read_text())
+        canonical_rules = deny_data.get("deny", [])
+        opencode_target = install_opencode_permissions(canonical_rules)
+        if opencode_target is not None:
+            log.write(f"  [green]✓[/green] OpenCode permissions: {opencode_target}")
 
 
 async def _emit_vscode_extension_wrappers(

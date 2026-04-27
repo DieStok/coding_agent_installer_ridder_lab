@@ -217,6 +217,221 @@ install_codex_deny_paths = install_codex_sandbox_config
 
 
 # ---------------------------------------------------------------------------
+# Codex hooks emission (https://developers.openai.com/codex/hooks)
+# ---------------------------------------------------------------------------
+#
+# Schema lives at ``~/.codex/hooks.json`` (separate from config.toml so we
+# fully own the file — config.toml's TOML array-of-tables nesting for
+# inline hooks is cumbersome to merge idempotently).
+#
+# Maps the existing five Claude-style hooks to Codex events by filename
+# convention:
+#   on_start_*.py  →  SessionStart  (matcher: startup|resume)
+#   on_stop_*.py   →  Stop          (no matcher — runs on every turn end)
+#
+# The hook scripts themselves were written against Claude's stdin protocol
+# but accept arbitrary JSON; they ignore unknown fields. If a script
+# misbehaves under Codex's protocol, the user's escape hatch is to set
+# ``[features] codex_hooks = false`` in config.toml — Codex then ignores
+# the file entirely.
+
+CODEX_HOOK_EVENT_BY_PREFIX = {
+    "on_start_": ("SessionStart", "startup|resume"),
+    "on_stop_": ("Stop", ""),
+}
+
+
+def build_codex_hooks_config(install_dir: Path, hook_names: list[str]) -> dict[str, Any]:
+    """Build the dict written to ``~/.codex/hooks.json``.
+
+    Routes Claude-style ``on_start_*`` / ``on_stop_*`` script names to the
+    Codex ``SessionStart`` / ``Stop`` events respectively.
+    """
+    from coding_agents.config import HOOK_SCRIPTS
+
+    by_event: dict[str, list[dict[str, Any]]] = {}
+    for name in hook_names:
+        script = HOOK_SCRIPTS.get(name)
+        if not script:
+            continue
+        for prefix, (event, matcher) in CODEX_HOOK_EVENT_BY_PREFIX.items():
+            if not script.startswith(prefix):
+                continue
+            entry: dict[str, Any] = {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"python3 {install_dir / 'hooks' / script}",
+                        "timeout": 30 if prefix == "on_stop_" else 10,
+                    }
+                ],
+            }
+            if matcher:
+                entry["matcher"] = matcher
+            by_event.setdefault(event, []).append(entry)
+            break
+    return {"hooks": by_event} if by_event else {}
+
+
+def install_codex_hooks(install_dir: Path, hook_names: list[str]) -> Path | None:
+    """Write ``~/.codex/hooks.json`` and ensure the feature flag is on.
+
+    Returns the hooks.json path on success, ``None`` if no scripts mapped.
+    Idempotent — re-running with the same input produces byte-identical
+    output. The feature flag is added as ``[features] codex_hooks = true``
+    in ``~/.codex/config.toml`` (a separate, additive merge so the existing
+    sandbox config is preserved).
+    """
+    from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.utils import secure_write_text
+
+    config = build_codex_hooks_config(install_dir, hook_names)
+    if not config:
+        return None
+
+    home = Path.home()
+    hooks_path = home / ".codex" / "hooks.json"
+    new_content = json.dumps(config, indent=2, sort_keys=True) + "\n"
+
+    if is_dry_run():
+        would("policy_emit", "codex_hooks", path=hooks_path, bytes=len(new_content))
+    else:
+        from coding_agents.installer.fs_ops import dry_run_mkdir
+        dry_run_mkdir(hooks_path.parent)
+        _backup_if_drifted(hooks_path, new_content)
+        secure_write_text(hooks_path, new_content)
+
+    _enable_codex_hooks_feature(home / ".codex" / "config.toml")
+    return hooks_path
+
+
+# ---------------------------------------------------------------------------
+# OpenCode permissions emission (https://opencode.ai/docs/permissions)
+# ---------------------------------------------------------------------------
+#
+# OpenCode v1.1.1+ replaced the legacy ``tools`` config with a unified
+# ``permission`` block. Three actions per rule: "allow" / "ask" / "deny".
+# Last matching pattern wins, so put broader rules first. Wildcards: ``*``
+# matches zero-or-more chars, ``?`` matches one.
+#
+# The lab's deny_rules.json carries shell-command patterns that we want to
+# refuse outright. We also lean on Apptainer for filesystem isolation, so
+# the "edit" rule stays permissive — the SIF's bind-mounts already constrain
+# blast radius to the mounted cwd.
+
+def build_opencode_permissions(deny_rules: list[str]) -> dict[str, Any]:
+    """Build the ``permission`` block for ~/.config/opencode/opencode.json.
+
+    Routes the lab's bash deny patterns into ``permission.bash`` with "deny",
+    keeps reads permissive (with the standard .env exclusion), asks before
+    network tool calls, and lets Apptainer's bind-mounts constrain edits.
+    """
+    bash: dict[str, str] = {"*": "ask"}
+    for pattern in deny_rules:
+        # The deny_rules.json entries are shell-snippet patterns; OpenCode
+        # uses the same wildcard syntax so we forward verbatim.
+        bash[pattern] = "deny"
+    # Common safe prefixes — explicit "allow" so users don't get prompted
+    # for every git status / ls.
+    safe_allows = ("git *", "ls *", "cat *", "grep *", "rg *", "find *", "pwd")
+    for pat in safe_allows:
+        bash.setdefault(pat, "allow")
+
+    return {
+        "*": "ask",
+        "read": {
+            "*": "allow",
+            "*.env": "deny",
+            "*.env.*": "deny",
+            "*.env.example": "allow",
+        },
+        "bash": bash,
+        "edit": "ask",
+        "webfetch": "ask",
+        "websearch": "allow",
+        "task": "allow",
+        "external_directory": "ask",
+    }
+
+
+def install_opencode_permissions(deny_rules: list[str]) -> Path | None:
+    """Merge a permission block into ~/.config/opencode/opencode.json.
+
+    Idempotent — re-running yields byte-identical output. Preserves any
+    other top-level keys the user has configured.
+    """
+    from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.utils import secure_write_text
+
+    target = Path.home() / ".config" / "opencode" / "opencode.json"
+    permission = build_opencode_permissions(deny_rules)
+
+    if target.exists():
+        try:
+            existing = json.loads(target.read_text())
+        except json.JSONDecodeError as exc:
+            log.warning("malformed %s; backing up + writing fresh: %s", target, exc)
+            backup = target.with_name(f"{target.stem}.backup-{_today_suffix()}{target.suffix}")
+            if not is_dry_run():
+                backup.write_text(target.read_text())
+            existing = {}
+    else:
+        existing = {}
+
+    existing["$schema"] = "https://opencode.ai/config.json"
+    existing["permission"] = permission
+    new_content = json.dumps(existing, indent=2, sort_keys=True) + "\n"
+
+    if is_dry_run():
+        would("policy_emit", "opencode_permissions", path=target, bytes=len(new_content))
+        return target
+
+    from coding_agents.installer.fs_ops import dry_run_mkdir
+    dry_run_mkdir(target.parent)
+    _backup_if_drifted(target, new_content)
+    secure_write_text(target, new_content)
+    return target
+
+
+def _enable_codex_hooks_feature(config_toml_path: Path) -> None:
+    """Set ``[features] codex_hooks = true`` in config.toml without disturbing
+    other keys (sandbox_workspace_write, etc.)."""
+    import tomllib
+    from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.utils import secure_write_text
+
+    try:
+        import tomli_w
+    except ImportError:
+        log.warning("tomli_w missing; skipping codex_hooks feature flag")
+        return
+
+    if config_toml_path.exists():
+        try:
+            existing = tomllib.loads(config_toml_path.read_text())
+        except tomllib.TOMLDecodeError as exc:
+            log.warning("malformed %s; skipping feature flag set: %s", config_toml_path, exc)
+            return
+    else:
+        existing = {}
+
+    features = existing.setdefault("features", {})
+    if features.get("codex_hooks") is True:
+        return  # already on, nothing to do
+    features["codex_hooks"] = True
+    new_content = tomli_w.dumps(existing)
+
+    if is_dry_run():
+        would("policy_emit", "codex_features_flag", path=config_toml_path, bytes=len(new_content))
+        return
+
+    from coding_agents.installer.fs_ops import dry_run_mkdir
+    dry_run_mkdir(config_toml_path.parent)
+    _backup_if_drifted(config_toml_path, new_content)
+    secure_write_text(config_toml_path, new_content)
+
+
+# ---------------------------------------------------------------------------
 # VSCode settings.json emission
 # ---------------------------------------------------------------------------
 
