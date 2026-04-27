@@ -72,6 +72,47 @@ def test_resolve_caller_arg_wins(fake_home, tmp_path):
     assert _resolve_vscode_settings_path(explicit) == explicit
 
 
+def test_resolve_finds_machine_settings_when_user_absent(fake_home):
+    """Machine settings.json is a valid target for machine-scoped wrapper keys."""
+    machine = fake_home / ".vscode-server" / "data" / "Machine" / "settings.json"
+    machine.parent.mkdir(parents=True)
+    machine.write_text("{}")
+    assert _resolve_vscode_settings_path() == machine
+
+
+def test_resolve_prefers_user_over_machine_when_both_present(fake_home):
+    """User scope is checked before Machine scope under the same server dir."""
+    base = fake_home / ".vscode-server" / "data"
+    (base / "User").mkdir(parents=True)
+    (base / "Machine").mkdir(parents=True)
+    user = base / "User" / "settings.json"
+    machine = base / "Machine" / "settings.json"
+    user.write_text("{}")
+    machine.write_text("{}")
+    assert _resolve_vscode_settings_path() == user
+
+
+def test_resolve_walks_subdir_under_vscode_agent_folder(fake_home, monkeypatch, tmp_path):
+    """Custom remote.SSH.serverInstallPath layout (with a .vscode-server/
+    subdir under VSCODE_AGENT_FOLDER) — same shape as Dieter's HPC setup."""
+    custom = tmp_path / "custom-server-root"
+    nested = custom / ".vscode-server" / "data" / "Machine" / "settings.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("{}")
+    monkeypatch.setenv("VSCODE_AGENT_FOLDER", str(custom))
+    assert _resolve_vscode_settings_path() == nested
+
+
+def test_resolve_handles_cursor_server_subdir_under_env_root(fake_home, monkeypatch, tmp_path):
+    """Custom serverInstallPath that holds a .cursor-server/ subdir."""
+    custom = tmp_path / "cursor-root"
+    nested = custom / ".cursor-server" / "data" / "Machine" / "settings.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("{}")
+    monkeypatch.setenv("VSCODE_AGENT_FOLDER", str(custom))
+    assert _resolve_vscode_settings_path() == nested
+
+
 # --------------------------------------------------------------------------- #
 # Wrapper key construction (per-phase gating)
 # --------------------------------------------------------------------------- #

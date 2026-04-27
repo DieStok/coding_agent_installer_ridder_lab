@@ -437,14 +437,50 @@ def _enable_codex_hooks_feature(config_toml_path: Path) -> None:
 
 # Resolution chain for the user's ``settings.json`` (per brainstorm decision 6).
 # First existing path wins.
+#
+# Both User and Machine settings files are valid emit targets — many of our
+# wrapper keys are machine-scoped (chatgpt.cliExecutable, pi-vscode.path,
+# terminal.integrated.env.linux), and per the VSCode docs:
+#
+#     "Machine settings (with machine or machine-overridable scopes) are
+#      not synchronized by default, since their values are specific to a
+#      given machine."
+#
+# So when a user has Settings Sync on, the User-scope file on a remote may
+# never receive these keys — Machine settings on the remote is the right
+# destination. We prefer User if present (some machine-overridable settings
+# still take effect there) and fall back to Machine otherwise. The probe
+# also handles non-standard layouts: a custom remote.SSH.serverInstallPath
+# typically contains a ``.vscode-server/`` (or ``.cursor-server/``) subdir
+# that holds the actual data tree.
 _VSCODE_SETTINGS_CANDIDATES_ENV_KEY = "VSCODE_AGENT_FOLDER"
-_VSCODE_SETTINGS_CANDIDATES = (
-    "~/.cursor-server/data/User/settings.json",
-    "~/.vscode-server/data/User/settings.json",
-    "~/.vscode-server-insiders/data/User/settings.json",
-    "~/.windsurf-server/data/User/settings.json",
-    "~/.vscodium-server/data/User/settings.json",
+
+_SETTINGS_LEAVES = ("data/User/settings.json", "data/Machine/settings.json")
+_SERVER_DIR_NAMES = (
+    ".cursor-server",
+    ".vscode-server",
+    ".vscode-server-insiders",
+    ".windsurf-server",
+    ".vscodium-server",
 )
+
+
+def _settings_candidates_under(root: Path) -> list[Path]:
+    """All plausible settings.json paths under ``root``.
+
+    Probes both ``<root>/data/{User,Machine}/settings.json`` (standard
+    layout, where ``root`` is itself a server dir) and
+    ``<root>/<server_dir>/data/{User,Machine}/settings.json`` (custom
+    serverInstallPath layout, where VSCode creates a ``.vscode-server``
+    subdir under the user-chosen root).
+    """
+    candidates: list[Path] = []
+    for leaf in _SETTINGS_LEAVES:
+        candidates.append(root / leaf)
+    for sub in _SERVER_DIR_NAMES:
+        for leaf in _SETTINGS_LEAVES:
+            candidates.append(root / sub / leaf)
+    return candidates
 
 
 def _resolve_vscode_settings_path(
@@ -460,15 +496,16 @@ def _resolve_vscode_settings_path(
 
     env_root = os.environ.get(_VSCODE_SETTINGS_CANDIDATES_ENV_KEY)
     if env_root:
-        candidate = Path(env_root) / "data" / "User" / "settings.json"
-        if candidate.exists():
-            return candidate
+        for candidate in _settings_candidates_under(Path(env_root).expanduser()):
+            if candidate.exists():
+                return candidate
 
     home = Path.home()
-    for raw in _VSCODE_SETTINGS_CANDIDATES:
-        path = Path(str(raw).replace("~", str(home), 1))
-        if path.exists():
-            return path
+    for sub in _SERVER_DIR_NAMES:
+        for leaf in _SETTINGS_LEAVES:
+            path = home / sub / leaf
+            if path.exists():
+                return path
     return None
 
 
