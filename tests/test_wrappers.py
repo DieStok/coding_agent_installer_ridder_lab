@@ -368,6 +368,59 @@ def test_wrapper_exit_codes_cover_new_failures():
         assert f"exit {code}" in text, f"missing exit {code} ({reason})"
 
 
+def test_wrapper_refuses_shared_lab_infra_cwd():
+    """Lab cwd-policy: refuse to run from /hpc/compgen/users/shared/*
+    (read-only shared infrastructure, the SIF lives there)."""
+    text = load_template()
+    # Both bare and any-subdir patterns must be in the case statement.
+    assert "/hpc/compgen/users/shared|/hpc/compgen/users/shared/*" in text
+    # Hint mentions the user's own analysis dir
+    assert "your own analysis dir" in text
+
+
+def test_wrapper_refuses_bare_projects_root():
+    """Lab cwd-policy: /hpc/compgen/projects (or with trailing /) is the
+    bare projects root — work belongs in a specific project subdir."""
+    text = load_template()
+    assert "/hpc/compgen/projects|/hpc/compgen/projects/" in text
+    assert "bare /hpc/compgen/projects root" in text
+
+
+def test_wrapper_refuses_project_root_without_subdir():
+    """Lab cwd-policy: /hpc/compgen/projects/<project>/ with no subdir
+    under it is also refused — must be inside a subproject / analysis /
+    raw / etc. subdir."""
+    text = load_template()
+    # The path-depth check counts IFS=/ parts.
+    assert 'IFS=\'/\' read -ra _PWD_PARTS <<< "$PWD"' in text
+    assert '"${#_PWD_PARTS[@]}" -lt 6' in text
+    assert "refusing to run from a project root" in text
+
+
+def test_wrapper_warns_when_cwd_has_no_user_component():
+    """Lab cwd-policy: warn (don't refuse) if $PWD doesn't contain $USER
+    as a path component. Convention is everyone works under their own
+    analysis dir."""
+    text = load_template()
+    # The check is a case-glob with the full-component pattern */USER/*
+    assert '*/"$USER"/*' in text
+    assert "no path component" in text
+    assert "Lab convention: work in your own subdir" in text
+    # Must NOT exit on this — it's a warning only.
+    warn_block_start = text.index('no path component')
+    warn_block_end = text.index('# --- Precondition: $PWD is shape-safe')
+    warn_block = text[warn_block_start:warn_block_end]
+    assert "exit " not in warn_block, (
+        "$USER-not-in-path is a warning only; must not call exit."
+    )
+
+
+def test_wrapper_cwd_policy_introduces_exit_12():
+    """The cwd-policy refusals all use the same new exit code 12."""
+    text = load_template()
+    assert "exit 12" in text
+
+
 def test_wrapper_carries_install_dir_relocation_todo():
     """Track the optional post-MVP design note: relocate
     ~/.{claude,codex,pi,opencode} into <install_dir>/state/<agent>/

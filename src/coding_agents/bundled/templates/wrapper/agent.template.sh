@@ -44,6 +44,57 @@ if [ ! -w "$PWD" ]; then
   exit 7
 fi
 
+# --- Precondition: lab cwd policy (de Ridder lab convention) ---
+#
+# Refuse to run from places where running an agent is almost always a
+# mistake: shared lab infrastructure (read-only by convention), or the
+# bare `projects/` / `projects/<project>/` roots (work belongs in a
+# subdir, typically `analysis/$USER/`).
+#
+# Soft-warn if $PWD doesn't contain $USER as a path component — lab
+# convention is everyone works under their own analysis dir, e.g.
+# /hpc/compgen/projects/<project>/<subproject>/analysis/$USER/. The
+# warning is non-fatal so users with project-shared workspaces (CI
+# containers, automation) aren't blocked.
+case "$PWD" in
+  /hpc/compgen/users/shared|/hpc/compgen/users/shared/*)
+    echo "agent-${AGENT_NAME}: refusing to run from '$PWD' — /hpc/compgen/users/shared/* is shared lab infrastructure (the SIF lives here), not a user workspace." >&2
+    echo "  Cd into your own analysis dir (e.g. /hpc/compgen/projects/<project>/<subproject>/analysis/${USER:-\$USER}/) and retry." >&2
+    exit 12
+    ;;
+  /hpc/compgen/projects|/hpc/compgen/projects/)
+    echo "agent-${AGENT_NAME}: refusing to run from the bare /hpc/compgen/projects root." >&2
+    echo "  Cd into a specific project subdir (e.g. /hpc/compgen/projects/<project>/<subproject>/analysis/${USER:-\$USER}/) and retry." >&2
+    exit 12
+    ;;
+  /hpc/compgen/projects/*)
+    # Require at least one subdir under /hpc/compgen/projects/<project>/.
+    # Path /hpc/compgen/projects/cool_project decomposes to 5 IFS=/ parts
+    # ('', 'hpc', 'compgen', 'projects', 'cool_project'); we want ≥ 6.
+    IFS='/' read -ra _PWD_PARTS <<< "$PWD"
+    if [ "${#_PWD_PARTS[@]}" -lt 6 ]; then
+      echo "agent-${AGENT_NAME}: refusing to run from a project root '$PWD' — work belongs in a subdir under the project." >&2
+      echo "  Cd into a subdir (e.g. analysis/${USER:-\$USER}/) and retry." >&2
+      exit 12
+    fi
+    unset _PWD_PARTS
+    ;;
+esac
+
+# Soft warning: cwd doesn't contain $USER as a path component. Skipped
+# silently if $USER itself is unset (CI containers, sandboxed shells).
+# We sandwich $PWD with extra slashes so the glob matches a full path
+# component, not a substring (avoids matching "dstoker" inside "dstokers").
+if [ -n "${USER:-}" ]; then
+  case "/$PWD/" in
+    */"$USER"/*) ;;  # OK: $USER appears as a full path component
+    *)
+      echo "agent-${AGENT_NAME}: warning: cwd '$PWD' has no path component '$USER'." >&2
+      echo "  Lab convention: work in your own subdir, e.g. /hpc/compgen/projects/<project>/<subproject>/analysis/$USER/. Continuing anyway." >&2
+      ;;
+  esac
+fi
+
 # --- Precondition: $PWD is shape-safe (security §3.1) ---
 # Synthesis §3.1 / Sprint 1 Task 1.1: a hostile cwd path containing `"`,
 # control characters, or newlines can forge audit-log entries via

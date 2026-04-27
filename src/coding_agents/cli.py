@@ -40,6 +40,13 @@ def main(
     ),
 ) -> None:
     """Cross-agent configuration and installer for AI coding agents."""
+    # Lab cwd-policy: warn (never refuse) before any subcommand if the
+    # user is in a problematic location under /hpc/compgen/. The
+    # wrapper-side bash check enforces the refusal at agent invocation.
+    from coding_agents.cwd_policy import check_cwd_warn_only
+
+    check_cwd_warn_only()
+
     if not (debug or dry_run):
         return
 
