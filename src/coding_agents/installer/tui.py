@@ -57,6 +57,11 @@ class CodingAgentsInstaller(App):
         # the full SelectionList pickers come back so you can customize.
         self.developer: bool = developer
 
+        # Flipped True by ReviewScreen on a successful install. Read by
+        # cli.py after .run() returns so the next-steps list can be
+        # printed to the host terminal (after the TUI has torn down).
+        self.install_succeeded: bool = False
+
         from coding_agents.detect_existing import scan_existing
 
         self.existing_inventory = scan_existing()

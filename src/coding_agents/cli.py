@@ -119,6 +119,14 @@ def install(
     tui = CodingAgentsInstaller(mode=mode, excluded_agents=excluded, developer=developer)
     tui.run()
 
+    # Print the next-steps list to the host terminal after the TUI tears
+    # down — same content the user just saw in the NextStepsScreen, so they
+    # can copy commands and click links from their normal terminal.
+    if getattr(tui, "install_succeeded", False):
+        from coding_agents.installer.next_steps import build_next_steps, render_terminal
+        steps = build_next_steps(tui.state)
+        print(render_terminal(steps))
+
 
 @app.command()
 def update() -> None:

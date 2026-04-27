@@ -33,6 +33,7 @@ class ReviewScreen(Screen):
         super().__init__()
         self.state = state
         self._install_done = False
+        self._install_failed = False
 
     def compose(self) -> ComposeResult:
         s = self.state
@@ -100,7 +101,13 @@ class ReviewScreen(Screen):
             self.query_one("#btn-back", Button).disabled = True
             self.run_worker(self._execute_install(), exclusive=True)
         elif event.button.id == "btn-done":
-            self.app.exit()
+            if self._install_failed:
+                self.app.exit()
+            else:
+                from coding_agents.installer.screens.next_steps import (
+                    NextStepsScreen,
+                )
+                self.app.push_screen(NextStepsScreen(self.state))
 
     def action_quit(self) -> None:
         self.app.exit()
@@ -128,6 +135,7 @@ class ReviewScreen(Screen):
             log.write(f"\n[red bold]Installation failed:[/red bold] {exc}")
             log.write("\n[dim]Press Done or 'q' to exit and inspect the log file.[/dim]")
             self._install_done = True
+            self._install_failed = True
             done_btn = self.query_one("#btn-done", Button)
             done_btn.disabled = False
             done_btn.label = "Exit"
@@ -138,20 +146,12 @@ class ReviewScreen(Screen):
             set_verbose_sink(None)
 
         log.write("\n[green bold]Installation complete![/green bold]")
-        log.write("Run [bold]source ~/.bashrc[/bold] to update your PATH.")
-        log.write("Then try: [bold]coding-agents doctor[/bold]")
-
-        # Optional manual installs the user might want to know about.
-        if "entire" not in self.state.tools:
-            log.write(
-                "\n[bold]Optional, install yourself:[/bold]\n"
-                "  • [bold]entire CLI[/bold] (session recording for agent runs) — "
-                "https://entire.io/  ·  https://github.com/entireio/cli\n"
-                "    (Not auto-installed because the upstream installer's post-install "
-                "hook reliably hangs on HPCs. Install on your laptop if you want it.)"
-            )
+        log.write("[dim]Press Done for the next-steps screen (commands + links).[/dim]")
 
         self._install_done = True
+        # Mark the app so cli.py can print the next-steps list to the host
+        # terminal after the TUI tears down.
+        self.app.install_succeeded = True
         done_btn = self.query_one("#btn-done", Button)
         done_btn.disabled = False
         done_btn.focus()
