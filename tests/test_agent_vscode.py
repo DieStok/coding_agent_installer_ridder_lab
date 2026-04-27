@@ -244,6 +244,7 @@ def test_build_apptainer_binds_pi_extension(tmp_path, monkeypatch):
 def test_main_no_wrap_execs_apptainer(isolated_cache, install_dir, monkeypatch, tmp_path):
     """NO_WRAP=1 routes through the SIF via `apptainer exec`, not the host npm bin."""
     monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     sif = tmp_path / "agent.sif"
     sif.write_bytes(b"\0")
     monkeypatch.setenv("AGENT_SIF", str(sif))
@@ -267,6 +268,52 @@ def test_main_no_wrap_execs_apptainer(isolated_cache, install_dir, monkeypatch, 
     assert str(sif.resolve()) in captured["argv"]
     assert captured["argv"][-2] == "claude"
     assert captured["argv"][-1] == "--version"
+
+
+def test_main_no_wrap_does_not_use_no_mount_home_tmp(
+    isolated_cache, install_dir, monkeypatch, tmp_path
+):
+    """Regression for the same pi-subagents EPERM bug fixed in the wrapper
+    template (commit 215ca9c). The NO_WRAP triage path in
+    runtime/agent_vscode.exec_no_wrap previously hard-coded
+    `--no-mount home,tmp` — same overlay-tmpfs pi-subagents bug. After
+    the fix it must use `--no-mount home` only and explicitly bind
+    `$TMPDIR:/tmp` (when TMPDIR is set) so the container's /tmp is
+    pinned to the SLURM per-job tmpspace, not silently re-routed by
+    apptainer's default-resolution rule."""
+    monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmpdir"))
+    (tmp_path / "tmpdir").mkdir()
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    monkeypatch.setenv("AGENT_SIF", str(sif))
+    monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
+    captured: dict = {}
+
+    def fake_execvp(file, argv):
+        captured["file"] = file
+        captured["argv"] = argv
+        raise SystemExit(0)
+
+    monkeypatch.setattr(os, "execvp", fake_execvp)
+    with pytest.raises(SystemExit):
+        agent_vscode.main(["--agent", "claude", "--", "--version"])
+
+    argv = captured["argv"]
+    # The buggy form must NOT be present.
+    assert "home,tmp" not in argv, (
+        "exec_no_wrap still passes --no-mount home,tmp — that breaks "
+        "pi-subagents inside NO_WRAP=1 triage (EPERM on "
+        "/tmp/pi-subagents-uid-<uid>/async-subagent-results)."
+    )
+    # The correct form must be present.
+    assert "home" in argv, "exec_no_wrap must still --no-mount home"
+    # The explicit $TMPDIR:/tmp bind must be present.
+    expected_bind = f"{tmp_path / 'tmpdir'}:/tmp"
+    assert expected_bind in argv, (
+        f"exec_no_wrap must explicitly --bind $TMPDIR:/tmp; "
+        f"got argv={argv}"
+    )
 
 
 def test_main_no_wrap_falls_back_to_default_sif(isolated_cache, install_dir, monkeypatch, tmp_path):

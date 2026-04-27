@@ -45,12 +45,12 @@ session you want unwrapped. **What this skips and what it keeps:**
 
 | Skipped (wrapper template's job) | Preserved (SIF + apptainer's job) |
 |---|---|
-| SLURM auto-srun + jobid cache | The SIF (deny rules, `--containall`, `--no-mount home,tmp`) |
+| SLURM auto-srun + jobid cache | The SIF (deny rules, `--containall`, `--no-mount home`, `--bind $TMPDIR:/tmp`) |
 | `cwd` lab-policy refusal | Apptainer's bind-mount discipline + `--no-privs` |
 | Audit-log JSONL emission | Version pinning (codex/opencode/pi/claude all SIF-baked) |
 | Per-agent lab bind tables (`~/.claude`, `~/.cache`, `/etc/ssl`, …) | Cwd + agent's config dir bound rw (minimal) |
 
-The helper does `apptainer exec --containall --no-mount home,tmp <sif>
+The helper does `apptainer exec --containall --no-mount home --bind $TMPDIR:/tmp <sif>
 <agent> ARGV` directly. Use it for **wrapper-vs-agent triage** ("does the
 agent itself work without our wrapper preconditions?"), not as a way to
 escape sandboxing — the SIF still constrains the agent.

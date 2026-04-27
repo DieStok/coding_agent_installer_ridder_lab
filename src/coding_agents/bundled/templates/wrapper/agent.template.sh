@@ -532,22 +532,31 @@ if [ -z "${CODING_AGENTS_VERBOSE:-}" ]; then
 fi
 
 # --- Exec ---
-# Why we mount host /tmp (no `tmp` in --no-mount):
+# Why we let apptainer mount /tmp (no `tmp` in --no-mount):
 # Apptainer's --writable-tmpfs overlay on /tmp rejects some syscalls
-# pi-subagents needs (probed 2026-04-27: Pi loads correctly with host
-# /tmp mounted, fails with `EPERM access /tmp/pi-subagents-uid-<uid>/
+# pi-subagents needs (probed 2026-04-27: Pi loads correctly with the
+# default mount, fails with `EPERM access /tmp/pi-subagents-uid-<uid>/
 # async-subagent-results` against the SIF tmpfs). Suspect inotify_add_watch
 # or fcntl-locking semantics on apptainer's overlay tmpfs differ from a
-# real tmpfs. Mounting host /tmp resolves it for all four agents and is
-# the apptainer default outside of --containall anyway. Cluster nodes
-# share /tmp under standard sticky-bit semantics (1777), so no security
-# regression — every agent already writes its own per-uid subdir there.
+# real tmpfs.
+#
+# What gets mounted at the container's /tmp: we pin it via an explicit
+# --bind "$TMPDIR:/tmp" rather than rely on apptainer's "$TMPDIR if set,
+# else /tmp" default-resolution rule. The wrapper hard-requires $TMPDIR
+# (precondition above; SLURM allocates it to a per-job tmpspace on this
+# cluster), so the container's /tmp is the per-job tmpspace — owned by
+# the user, not shared with other users on the node, and discarded at
+# job end. Pinning the bind explicitly means a future apptainer
+# version-default change can't silently re-route the container /tmp to
+# the node-wide shared /tmp (which would re-introduce co-tenant TOCTOU
+# attack surface for pi-subagents-style predictable-name files).
 exec apptainer exec \
   --containall \
   --no-mount home \
   --writable-tmpfs \
   --env "HOME=$HOME" \
   --bind "$PWD:$PWD" \
+  --bind "$TMPDIR:/tmp" \
   --pwd "$PWD" \
   --no-privs \
   "${ENV_BINDS[@]}" \

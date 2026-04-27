@@ -433,7 +433,7 @@ def exec_no_wrap(agent: str, agent_argv: list[str], install_dir: Path | None = N
     the wrapper template's bind-mount construction.
 
     Keeps: SIF entry, baked-in deny rules, Apptainer's ``--containall`` +
-    ``--no-mount home,tmp`` isolation, version pinning.
+    ``--no-mount home`` isolation, version pinning.
 
     Used for triage when a wrapper layer is suspect (e.g. "does the agent
     work without our preconditions?"). Requires ``apptainer`` + the SIF to
@@ -471,12 +471,21 @@ def exec_no_wrap(agent: str, agent_argv: list[str], install_dir: Path | None = N
     )
 
     apptainer = shutil.which("apptainer") or "apptainer"
+    # See bundled/templates/wrapper/agent.template.sh for the rationale on
+    # using --no-mount home (without `tmp`) and pinning /tmp via an explicit
+    # bind to $TMPDIR. Same pi-subagents EPERM bug applies on this code path
+    # if the user runs Pi with CODING_AGENTS_NO_WRAP=1 set.
+    tmp_bind: list[str] = []
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        tmp_bind = ["--bind", f"{tmpdir}:/tmp"]
     apptainer_argv = [
         apptainer, "exec",
         "--containall",
-        "--no-mount", "home,tmp",
+        "--no-mount", "home",
         "--writable-tmpfs",
         "--no-privs",
+        *tmp_bind,
         *bind_args,
         str(sif),
         agent,

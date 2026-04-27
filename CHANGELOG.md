@@ -7,7 +7,8 @@
 - **`CODING_AGENTS_NO_WRAP=1` no longer skips the SIF.** The env var
   previously exec'd the host npm-installed binary directly, bypassing
   every layer of sandboxing. It now goes through `apptainer exec
-  --containall --no-mount home,tmp <sif> <agent>` — still bypasses the
+  --containall --no-mount home --bind $TMPDIR:/tmp <sif> <agent>` —
+  still bypasses the
   wrapper template (cwd policy, audit log, lab binds, SLURM auto-srun)
   for triage, but keeps the SIF's deny rules and `--containall`
   isolation. Requires apptainer on PATH (compute-only on the lab

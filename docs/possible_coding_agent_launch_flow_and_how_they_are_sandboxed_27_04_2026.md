@@ -424,7 +424,7 @@ Or, better: use a `ExecStartPre` that allocates a SLURM job and launch the agent
 
 | Skipped (wrapper template's job) | Preserved (SIF + apptainer's job) |
 |---|---|
-| SLURM auto-srun + jobid cache + flock | The SIF itself (deny rules, `--containall`, `--no-mount home,tmp`) |
+| SLURM auto-srun + jobid cache + flock | The SIF itself (deny rules, `--containall`, `--no-mount home`, `--bind $TMPDIR:/tmp`) |
 | Lab cwd-policy refusal | Apptainer's bind-mount discipline + `--no-privs` |
 | Audit-log JSONL emission | Version pinning (codex/opencode/pi/claude all SIF-baked) |
 | Per-agent lab bind tables (`~/.cache`, `/etc/ssl/certs`, …) | Cwd + agent's config dir (rw) — minimal binds |
@@ -436,8 +436,9 @@ extension-host (or shell)
   └── agent-<n>-vscode (3-line bash stub)
         └── agent-vscode --agent <n> -- ARGV
               └── (NO_WRAP=1 detected → BYPASS the wrapper template)
-                  apptainer exec --containall --no-mount home,tmp \
+                  apptainer exec --containall --no-mount home \
                     --writable-tmpfs --no-privs \
+                    --bind $TMPDIR:/tmp \
                     --bind <cwd>:<cwd>:rw \
                     --bind <agent_config_dir>:<agent_config_dir>:rw \
                     <sif> <agent> ARGV

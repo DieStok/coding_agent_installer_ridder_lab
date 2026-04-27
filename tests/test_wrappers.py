@@ -437,23 +437,31 @@ def test_wrapper_mounts_host_tmp_not_sif_tmpfs():
         EPERM: operation not permitted, access
         '/tmp/pi-subagents-uid-<uid>/async-subagent-results'
     when the wrapper uses `--no-mount home,tmp` + `--writable-tmpfs`.
-    Probed 2026-04-27: removing `tmp` from --no-mount (so apptainer
-    bind-mounts host /tmp instead of using the SIF tmpfs overlay) makes
-    Pi load all four extensions correctly.
+    Probed 2026-04-27: removing `tmp` from --no-mount makes Pi load
+    all four extensions correctly.
 
-    The wrapper must therefore use `--no-mount home` only — never
-    `--no-mount home,tmp` or `--no-mount tmp`.
+    Security review (2026-04-27) further required pinning the
+    container's /tmp to $TMPDIR explicitly via --bind, not relying on
+    apptainer's "$TMPDIR if set, else /tmp" default-resolution rule.
+    On this cluster $TMPDIR is the SLURM per-job tmpspace (owned by the
+    user, vanishes at job end); the explicit bind prevents an apptainer
+    version change from silently re-routing to the node-wide shared
+    /tmp.
     """
     text = load_template()
     assert "--no-mount home,tmp" not in text, (
         "wrapper still uses --no-mount home,tmp — that breaks "
         "pi-subagents (apptainer's --writable-tmpfs overlay on /tmp "
-        "rejects some ops with EPERM that the host's real tmpfs "
-        "accepts). Use `--no-mount home` and let host /tmp mount."
+        "rejects some ops with EPERM that a real tmpfs accepts)."
     )
     assert "--no-mount home" in text, (
         "wrapper must still suppress the auto-mount of host home — "
         "that's our isolation discipline."
+    )
+    assert '--bind "$TMPDIR:/tmp"' in text, (
+        "wrapper must explicitly bind $TMPDIR:/tmp so the container's "
+        "/tmp is pinned to the SLURM per-job tmpspace, not silently "
+        "resolved by apptainer's default rule."
     )
 
 
