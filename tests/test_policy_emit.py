@@ -8,7 +8,8 @@ import pytest
 
 from coding_agents.installer.policy_emit import (
     merge_claude_settings,
-    merge_codex_deny_paths,
+    merge_codex_deny_paths,  # back-compat shim
+    merge_codex_sandbox_config,
 )
 
 
@@ -35,29 +36,56 @@ def test_merge_claude_settings_dedupes():
     assert out["permissions"]["deny"].count("Read(./.env)") == 1
 
 
-def test_merge_codex_deny_paths_preserves_other_keys():
-    existing = {
-        "model": "gpt-5",
-        "approval_policy": "ask",
-        "sandbox": {"existing_key": "preserved", "deny_paths": ["./old"]},
-    }
-    deny_paths = ["./.env", "~/.ssh"]
-    out = merge_codex_deny_paths(existing, deny_paths)
+def test_merge_codex_sandbox_config_writes_workspace_write_schema():
+    """Synthesis §3.7 / Sprint 1 Task 1.4: replace fictional [sandbox]
+    deny_paths with the real sandbox_mode + [sandbox_workspace_write]."""
+    out = merge_codex_sandbox_config({"model": "gpt-5", "approval_policy": "ask"})
     assert out["model"] == "gpt-5"
     assert out["approval_policy"] == "ask"
-    assert out["sandbox"]["existing_key"] == "preserved"
-    assert out["sandbox"]["deny_paths"] == ["./old", "./.env", "~/.ssh"]
+    assert out["sandbox_mode"] == "workspace-write"
+    sws = out["sandbox_workspace_write"]
+    assert sws["network_access"] is True
+    assert sws["exclude_tmpdir_env_var"] is False
+    assert sws["exclude_slash_tmp"] is False
 
 
-def test_merge_codex_deny_paths_empty_existing():
-    out = merge_codex_deny_paths({}, ["./.env"])
-    assert out == {"sandbox": {"deny_paths": ["./.env"]}}
+def test_merge_codex_sandbox_config_drops_legacy_deny_paths():
+    """If a user's config still has the fictional [sandbox] deny_paths
+    key from the previous version, drop it cleanly."""
+    existing = {
+        "model": "gpt-5",
+        "sandbox": {"deny_paths": ["./old", "~/.ssh"]},
+    }
+    out = merge_codex_sandbox_config(existing)
+    # Empty [sandbox] table dropped entirely
+    assert "sandbox" not in out
+    assert "deny_paths" not in out.get("sandbox_workspace_write", {})
+    assert out["sandbox_mode"] == "workspace-write"
 
 
-def test_merge_codex_deny_paths_dedupes():
-    existing = {"sandbox": {"deny_paths": ["./.env"]}}
-    out = merge_codex_deny_paths(existing, ["./.env", "~/.ssh"])
-    assert out["sandbox"]["deny_paths"] == ["./.env", "~/.ssh"]
+def test_merge_codex_sandbox_config_preserves_other_sandbox_keys():
+    """[sandbox] tables that have user-managed keys other than the legacy
+    deny_paths are kept (only the bogus key is dropped)."""
+    existing = {"sandbox": {"some_user_key": "preserved", "deny_paths": ["./old"]}}
+    out = merge_codex_sandbox_config(existing)
+    # deny_paths gone, but the user-managed key survives
+    assert "deny_paths" not in out["sandbox"]
+    assert out["sandbox"]["some_user_key"] == "preserved"
+
+
+def test_merge_codex_sandbox_config_preserves_user_overrides():
+    """If the user already set network_access = false, don't overwrite."""
+    existing = {"sandbox_workspace_write": {"network_access": False}}
+    out = merge_codex_sandbox_config(existing)
+    assert out["sandbox_workspace_write"]["network_access"] is False
+
+
+def test_back_compat_merge_codex_deny_paths_emits_new_schema():
+    """The old merge_codex_deny_paths(existing, deny_paths) shim must still
+    work and emit the new schema, ignoring its deny_paths argument."""
+    out = merge_codex_deny_paths({"model": "gpt-5"}, ["./irrelevant", "~/.ssh"])
+    assert out["sandbox_mode"] == "workspace-write"
+    assert "deny_paths" not in out.get("sandbox_workspace_write", {})
 
 
 def test_managed_settings_template_has_correct_nesting():
@@ -134,14 +162,16 @@ def test_install_codex_deny_paths_dry_run_writes_nothing(tmp_path):
     assert list(target.parent.glob("*.backup-*")) == []
 
 
-def test_deny_rules_codex_paths_match_claude():
-    """Single source of truth — Codex toml deny_paths should mirror the
-    Claude deny set (modulo formatting)."""
+def test_deny_rules_no_longer_contains_fictional_codex_key():
+    """Synthesis §3.7 / Sprint 1 Task 1.4: ``codex_config_toml_deny_paths``
+    was the path-list payload for the fictional [sandbox] deny_paths key.
+    The real Codex sandbox schema doesn't accept path-list denies; sandbox
+    behaviour is gated via sandbox_mode + [sandbox_workspace_write] now,
+    so this key is gone from deny_rules.json."""
     deny_rules_path = Path(__file__).resolve().parent.parent / "src" / "coding_agents" / "bundled" / "hooks" / "deny_rules.json"
     data = json.loads(deny_rules_path.read_text())
-    codex = data["codex_config_toml_deny_paths"]
-    # Spot-check the security-critical ones
-    assert "~/.ssh" in codex
-    assert "~/.gnupg" in codex
-    assert "~/.aws" in codex
-    assert "./.env" in codex
+    assert "codex_config_toml_deny_paths" not in data, (
+        "deny_rules.json should not contain the fictional Codex deny-paths "
+        "key after Sprint 1 Task 1.4. Codex sandbox behaviour is now "
+        "configured via sandbox_mode in policy_emit.merge_codex_sandbox_config."
+    )

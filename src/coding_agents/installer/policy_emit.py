@@ -4,7 +4,14 @@ Two consumers:
 - Claude Code: ``~/.claude/settings.json`` (managed-default, NOT enforced —
   v2 D5 will write to ``/etc/claude-code/managed-settings.json`` for true
   enforcement; until then the user can override).
-- Codex CLI: ``~/.codex/config.toml`` ``[sandbox]`` ``deny_paths``.
+- Codex CLI: ``~/.codex/config.toml`` — ``sandbox_mode = "workspace-write"``
+  plus the ``[sandbox_workspace_write]`` table. Synthesis §3.7 / Sprint 1
+  Task 1.4: the previous emit wrote ``[sandbox] deny_paths``, which is a
+  fictional key (no such schema exists in any 2026 Codex version); Codex
+  silently ignored it. The real schema gates network access via
+  ``network_access`` (boolean) and exposes ``exclude_tmpdir_env_var`` /
+  ``exclude_slash_tmp`` for /tmp control. ``writable_roots`` is automatic
+  for the cwd; no extras needed for normal HPC use.
 
 The Claude path uses pure JSON; the Codex path uses ``tomllib`` (read) +
 ``tomli_w`` (write) so existing user keys are preserved across re-emit.
@@ -65,21 +72,59 @@ def merge_claude_settings(template: dict[str, Any], deny_rules: dict[str, Any]) 
     return out
 
 
-def merge_codex_deny_paths(existing_toml: dict[str, Any], deny_paths: list[str]) -> dict[str, Any]:
-    """Pure: merge deny_paths into existing_toml's [sandbox].deny_paths.
+def merge_codex_sandbox_config(existing_toml: dict[str, Any]) -> dict[str, Any]:
+    """Pure: ensure existing_toml has the canonical Codex sandbox schema.
 
-    Preserves all other keys in the user's existing TOML.
+    Writes ``sandbox_mode = "workspace-write"`` (the typical agent-edit
+    use-case; alternatives are ``"read-only"`` for full lockdown and
+    ``"danger-full-access"`` for unsandboxed) plus the
+    ``[sandbox_workspace_write]`` table with:
+      - ``network_access = true`` — agents routinely need outbound HTTP for
+        npm install, pip install, model API calls. Apptainer's --containall
+        does not block egress at the kernel level either, so a `false` here
+        would create a useless inconsistency. (User decision 2026-04-27;
+        users wanting full network lockdown should set
+        ``sandbox_mode = "read-only"``.)
+      - ``exclude_tmpdir_env_var = false`` — keep $TMPDIR writable
+      - ``exclude_slash_tmp = false`` — keep /tmp writable
+
+    Preserves all other top-level keys in the user's existing TOML and
+    any custom keys inside ``[sandbox_workspace_write]`` we don't manage.
+
+    The legacy ``[sandbox] deny_paths = [...]`` key — written by previous
+    versions of this code — is silently dropped on re-emit since it has
+    no effect in any real Codex version (synthesis §3.7).
     """
     out = json.loads(json.dumps(existing_toml))  # deep copy
-    sandbox = out.setdefault("sandbox", {})
-    existing_paths = list(sandbox.get("deny_paths", []))
-    seen = set(existing_paths)
-    for p in deny_paths:
-        if p not in seen:
-            existing_paths.append(p)
-            seen.add(p)
-    sandbox["deny_paths"] = existing_paths
+
+    # Drop the fictional [sandbox] deny_paths if present (legacy cleanup).
+    legacy_sandbox = out.get("sandbox")
+    if isinstance(legacy_sandbox, dict) and "deny_paths" in legacy_sandbox:
+        legacy_sandbox.pop("deny_paths", None)
+        # If the [sandbox] table is now empty, drop it entirely so we
+        # don't leave a vestigial section.
+        if not legacy_sandbox:
+            out.pop("sandbox", None)
+
+    out["sandbox_mode"] = "workspace-write"
+    sws = out.setdefault("sandbox_workspace_write", {})
+    sws.setdefault("network_access", True)
+    sws.setdefault("exclude_tmpdir_env_var", False)
+    sws.setdefault("exclude_slash_tmp", False)
     return out
+
+
+# Back-compat alias so any external callers don't break before they migrate.
+# Drop this in the next minor release.
+def merge_codex_deny_paths(existing_toml: dict[str, Any], _deny_paths: list[str]) -> dict[str, Any]:
+    """Deprecated: emits the canonical sandbox schema regardless of deny_paths.
+
+    The deny_paths argument is ignored — synthesis §3.7 documented that
+    [sandbox] deny_paths is not a real Codex key. This shim exists for one
+    release for backward compatibility and will be removed in the next
+    minor version. Use ``merge_codex_sandbox_config`` directly.
+    """
+    return merge_codex_sandbox_config(existing_toml)
 
 
 def install_managed_claude_settings(
@@ -110,11 +155,21 @@ def install_managed_claude_settings(
     return target
 
 
-def install_codex_deny_paths(
-    deny_rules_path: Path,
+def install_codex_sandbox_config(
+    _deny_rules_path: Path,
     target: Path,
 ) -> Path:
-    """Read deny_rules, merge into ~/.codex/config.toml [sandbox].deny_paths."""
+    """Write the canonical Codex sandbox schema to ``~/.codex/config.toml``.
+
+    Reads the existing TOML (if any) so user-managed keys are preserved,
+    then ensures ``sandbox_mode = "workspace-write"`` and the
+    ``[sandbox_workspace_write]`` table are set. Drops any legacy
+    ``[sandbox] deny_paths`` (synthesis §3.7).
+
+    The ``deny_rules_path`` argument is unused since the sandbox schema
+    is fixed; it's retained so the caller signature matches the install
+    path's other policy emitters and so legacy callers don't break.
+    """
     import tomllib
     from coding_agents.dry_run import is_dry_run, would
     from coding_agents.utils import secure_write_text
@@ -123,11 +178,6 @@ def install_codex_deny_paths(
         import tomli_w
     except ImportError as exc:
         log.warning("tomli_w not installed; skipping Codex config emit: %s", exc)
-        return target
-
-    deny_rules = json.loads(deny_rules_path.read_text())
-    deny_paths = deny_rules.get("codex_config_toml_deny_paths", [])
-    if not deny_paths:
         return target
 
     if target.exists():
@@ -144,7 +194,7 @@ def install_codex_deny_paths(
     else:
         existing = {}
 
-    merged = merge_codex_deny_paths(existing, deny_paths)
+    merged = merge_codex_sandbox_config(existing)
     new_content = tomli_w.dumps(merged)
 
     if is_dry_run():
@@ -159,3 +209,7 @@ def install_codex_deny_paths(
     _backup_if_drifted(target, new_content)
     secure_write_text(target, new_content)
     return target
+
+
+# Back-compat alias for one release; remove in next minor.
+install_codex_deny_paths = install_codex_sandbox_config

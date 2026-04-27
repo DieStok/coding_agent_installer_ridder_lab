@@ -152,9 +152,9 @@ def _sync_deny_rules(install_dir: Path, agents: list[str]) -> None:
             _apply_claude_deny(canonical_rules)
             console.print(f"  [green]✓[/green] Claude Code deny rules")
 
-        elif fmt == "starlark":
+        elif fmt == "codex_toml":
             _apply_codex_deny(canonical_rules)
-            console.print(f"  [green]✓[/green] Codex Starlark deny rules")
+            console.print(f"  [green]✓[/green] Codex sandbox config")
 
         elif fmt == "opencode":
             console.print(f"  [dim]OpenCode deny rules: manual config recommended[/dim]")
@@ -170,24 +170,27 @@ def _apply_claude_deny(rules: list[str]) -> None:
         console.print(f"    [dim]Preserved {len(r.preserved_keys)} existing deny rules[/dim]")
 
 
-def _apply_codex_deny(rules: list[str]) -> None:
-    """Generate Starlark deny rules from canonical list."""
-    rules_dir = Path.home() / ".codex" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-    rules_file = rules_dir / "deny.rules"
+def _apply_codex_deny(_rules: list[str]) -> None:
+    """Refresh Codex sandbox config in ~/.codex/config.toml.
 
-    lines = ["# Auto-generated deny rules for Codex CLI (coding-agents sync)"]
-    for rule in rules:
-        # Parse "Read(./path)" format
-        if rule.startswith("Read(") and rule.endswith(")"):
-            pattern = rule[5:-1]  # strip Read( and )
-            lines.append(f'prefix_rule(')
-            lines.append(f'    pattern = ["cat", "{pattern}"],')
-            lines.append(f'    decision = "forbidden",')
-            lines.append(f'    justification = "Reading {pattern} is denied by policy"')
-            lines.append(f')')
+    Routes through ``policy_emit.install_codex_deny_paths`` (the install path)
+    so the install and sync paths produce byte-identical output. The
+    canonical_rules argument is unused — the install function reads
+    deny_rules.json directly to stay aligned with the registry.
 
-    rules_file.write_text("\n".join(lines) + "\n")
+    Pre-Sprint 1, this function emitted a Starlark file at
+    ~/.codex/rules/deny.rules — but Codex never read that path
+    (synthesis §3.6). The install path was already writing the real
+    [sandbox_workspace_write] schema; this just makes sync match.
+    """
+    from coding_agents.installer.policy_emit import install_codex_deny_paths
+
+    deny_rules_path = (
+        Path(__file__).resolve().parent.parent
+        / "bundled" / "hooks" / "deny_rules.json"
+    )
+    target = Path.home() / ".codex" / "config.toml"
+    install_codex_deny_paths(deny_rules_path, target)
 
 
 def _sync_mcp(install_dir: Path, agents: list[str]) -> None:

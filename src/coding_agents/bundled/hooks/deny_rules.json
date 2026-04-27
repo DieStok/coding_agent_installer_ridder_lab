@@ -1,5 +1,5 @@
 {
-  "description": "Permission deny rules — single source of truth for both Claude Code (~/.claude/settings.json permissions.deny) and Codex CLI (~/.codex/config.toml [sandbox] deny_paths). Defence-in-depth on top of the Apptainer cwd-only bind.",
+  "description": "Permission deny rules — single source of truth for Claude Code (~/.claude/settings.json permissions.deny). Defence-in-depth on top of the Apptainer cwd-only bind. Codex sandboxing is handled separately via sandbox_mode=workspace-write + [sandbox_workspace_write] in ~/.codex/config.toml (synthesis §3.7); Codex has no path-based deny list.",
   "deny": [
     "Read(./.env)",
     "Read(./.env.*)",
@@ -35,22 +35,5 @@
       "Read(~/.netrc)",
       "Read(~/.config/gh/**)"
     ]
-  },
-  "codex_config_toml_deny_paths": [
-    "./.env",
-    "./.env.*",
-    "./secrets",
-    "./config/credentials.json",
-    "./.entire/metadata",
-    "./build",
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.irods",
-    "~/.aws",
-    "~/.kube",
-    "~/.config/gcloud",
-    "~/.codex/auth.json",
-    "~/.netrc",
-    "~/.config/gh"
-  ]
+  }
 }
