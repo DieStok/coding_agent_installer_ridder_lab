@@ -248,14 +248,22 @@ if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
   fi
 fi
 
-# --- Per-session credential copy (Claude only — others use API keys above) ---
+# --- Claude credentials: existence gate (no longer a separate bind) ---
+#
+# Pre-Sprint-1, the wrapper had no HOME bind-mount and overlaid only a
+# per-session read-only copy of ~/.claude/.credentials.json at
+# /home/agentuser/.claude/.credentials.json:ro. Sprint 1 Task 1.7 +
+# 1.5 now bind the whole ~/.claude/ writable (see AGENT_HOME_BINDS
+# below for AGENT_NAME=claude), which subsumes that single-file
+# overlay AND lets Claude refresh its OAuth token live (the previous
+# :ro overlay broke token refresh). The TMP_CREDS_DIR scaffolding
+# is kept for any future per-session overlay needs (e.g. if we want
+# to layer a fresh-each-run credentials view back on top); for now
+# it's just a no-op tmp dir with a cleanup trap.
 TMP_CREDS_DIR=$(mktemp -d -p "$TMPDIR" agentcreds.XXXXXXXX)
 trap 'rm -rf "$TMP_CREDS_DIR"' EXIT
 CREDS_BINDS=()
-if [ -r "$HOME/.claude/.credentials.json" ]; then
-  install -m 0600 "$HOME/.claude/.credentials.json" "$TMP_CREDS_DIR/.credentials.json"
-  CREDS_BINDS=( --bind "$TMP_CREDS_DIR/.credentials.json:/home/agentuser/.claude/.credentials.json:ro" )
-elif [ "$AGENT_NAME" = "claude" ]; then
+if [ "$AGENT_NAME" = "claude" ] && [ ! -r "$HOME/.claude/.credentials.json" ]; then
   echo "agent-claude: ~/.claude/.credentials.json not found — run 'claude login' on submit node first." >&2
   exit 4
 fi
@@ -266,26 +274,73 @@ if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
   SECRETS_BINDS=( --bind "$AGENT_SECRETS_DIR:/run/agent/secrets:ro" )
 fi
 
-# --- Per-agent HOME bind-mounts (synthesis §3.10/§3.12; user decision 2026-04-27) ---
-# Pi and OpenCode both persist substantial state under $HOME (auth.json,
-# session DBs, snapshots, LSP caches, prompt history). The base wrapper
-# uses --no-mount home,tmp so the host HOME is invisible inside the SIF.
-# Without a bind-mount Pi runs in "minimal" mode (no MCP, no plugins,
-# no auth) and OpenCode loses auth/sessions/DB on every invocation.
+# --- Per-agent HOME bind-mounts (synthesis §3.8/§3.10/§3.12; user decisions 2026-04-27) ---
 #
-# Strategy: bind only the specific subdirs each agent needs, writable.
-# The rest of $HOME stays isolated (defence-in-depth: deny rules cover
-# ~/.ssh, ~/.aws, etc., and the cwd-bind keeps the agent away from
-# anything not explicitly bound).
+# All four agents persist runtime state under $HOME ("agent state" =
+# settings, deny-rules, OAuth tokens, session DBs, MCP config, memory,
+# file-history, snapshots, LSP caches, prompt history, …). The base
+# wrapper uses --no-mount home,tmp so the host HOME is invisible inside
+# the SIF; without an explicit bind-mount each agent runs in "minimal"
+# mode — its host-side state is unreachable.
+#
+# Strategy: per-agent, bind only the specific subdirs the agent needs,
+# writable. The rest of $HOME stays isolated (defence-in-depth: deny
+# rules cover ~/.ssh, ~/.aws, etc., and the cwd-bind keeps the agent
+# away from anything not explicitly bound).
 #
 # Inside the SIF, $HOME is normally /home/agentuser/. We pass
 # APPTAINERENV_HOME so the in-container HOME matches the host path —
-# that way `~/.pi/agent` inside the SIF resolves to the same location
+# that way `~/.<agent>` inside the SIF resolves to the same location
 # the user already uses on the host. If $HOME is missing pieces (just
 # the bound subdir is present), Apptainer's tmpfs overlay creates
 # empty parent dirs as needed.
+#
+# TODO (optional, post-MVP): relocate all ~/.{claude,codex,pi,opencode}
+# state into <install_dir>/state/<agent>/ via per-agent env vars
+# (CLAUDE_CONFIG_DIR, CODEX_HOME / OPENAI_CODEX_HOME, the Pi
+# PI_CODING_AGENT_DIR, OPENCODE_CONFIG_DIR + friends). Then a single
+# bind of <install_dir>/state/ would cover all four agents, the host
+# $HOME would never be touched by the SIF, and group/shared installs
+# could optionally share state across users. Not done now because (a)
+# it changes UX (running `claude` outside the wrapper would no longer
+# see HPC sessions unless the env vars are also set in the user's
+# shell rc), and (b) some agents only honour these env vars in recent
+# versions — needs per-agent verification.
 AGENT_HOME_BINDS=()
 case "$AGENT_NAME" in
+  claude)
+    mkdir -p "$HOME/.claude"
+    if [ -d "$HOME/.claude" ]; then
+      # Bind the whole ~/.claude/ writable so settings.json (deny
+      # rules), CLAUDE.md (memory), file-history/, backups/, rules/,
+      # teams/, statusbar config all persist + are readable inside
+      # the SIF. The per-session .credentials.json copy below
+      # (CREDS_BINDS) overlays the bind with a read-only tmpfs entry
+      # so a hostile agent can't rewrite the credentials file.
+      AGENT_HOME_BINDS+=( --bind "$HOME/.claude:$HOME/.claude" )
+      export APPTAINERENV_HOME="$HOME"
+    else
+      echo "agent-${AGENT_NAME}: failed to create ~/.claude for bind-mount." >&2
+      exit 11
+    fi
+    ;;
+  codex)
+    mkdir -p "$HOME/.codex"
+    if [ -d "$HOME/.codex" ]; then
+      # Bind the whole ~/.codex/ writable so config.toml (the
+      # sandbox_mode = "workspace-write" + [sandbox_workspace_write]
+      # schema we emit at install time) is actually read by Codex
+      # inside the SIF — without the bind it's invisible and the
+      # agent runs unsandboxed-by-config (still cwd-confined by
+      # Apptainer, but the per-agent policy is unread). Also covers
+      # auth.json (OAuth-based providers) and sessions/.
+      AGENT_HOME_BINDS+=( --bind "$HOME/.codex:$HOME/.codex" )
+      export APPTAINERENV_HOME="$HOME"
+    else
+      echo "agent-${AGENT_NAME}: failed to create ~/.codex for bind-mount." >&2
+      exit 11
+    fi
+    ;;
   pi)
     mkdir -p "$HOME/.pi/agent"
     if [ -d "$HOME/.pi/agent" ]; then

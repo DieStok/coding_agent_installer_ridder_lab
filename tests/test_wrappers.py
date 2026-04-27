@@ -240,6 +240,69 @@ def test_wrapper_provider_env_allowlist_applied_to_keyfile_glob_too():
 # ---------------------------------------------------------------------------
 
 
+def test_wrapper_binds_claude_home():
+    """Sprint 1 Task 1.5 (uniformity follow-up to Task 1.7): the claude
+    case binds host ~/.claude/ writable so settings.json deny rules,
+    CLAUDE.md memory, file-history, and statusbar config persist + are
+    actually readable inside the SIF (the host-side write at install
+    time is unreachable inside the SIF without this bind)."""
+    text = load_template()
+    case_block = text[text.index("case \"$AGENT_NAME\""):]
+    case_block = case_block[: case_block.index("esac")]
+    assert "claude)" in case_block
+    assert '--bind "$HOME/.claude:$HOME/.claude"' in case_block
+
+
+def test_wrapper_binds_codex_home():
+    """Sprint 1 Task 1.5: codex case binds host ~/.codex/ writable so the
+    sandbox_mode = "workspace-write" + [sandbox_workspace_write] schema
+    we emit at install time is actually read by Codex inside the SIF."""
+    text = load_template()
+    case_block = text[text.index("case \"$AGENT_NAME\""):]
+    case_block = case_block[: case_block.index("esac")]
+    assert "codex)" in case_block
+    assert '--bind "$HOME/.codex:$HOME/.codex"' in case_block
+
+
+def test_wrapper_credentials_no_longer_overlay_at_agentuser_path():
+    """Pre-Sprint-1.5 the wrapper did
+        --bind $TMP/.credentials.json:/home/agentuser/.claude/.credentials.json:ro
+    That target path was wrong once APPTAINERENV_HOME=$HOME made
+    in-container HOME match the host's HOME path. Now that the whole
+    ~/.claude/ is bound writable, the per-file overlay is removed (and
+    the wrapper no longer breaks Claude's live OAuth token refresh).
+
+    Strip comments before the check so inline historical notes about
+    the old path don't cause a false positive.
+    """
+    text = load_template()
+    # Drop full-line comments + trailing comments — leave only active code.
+    code_only_lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        # Trailing-comment strip (cheap heuristic: split on " # " only)
+        if " # " in line:
+            line = line.split(" # ", 1)[0]
+        code_only_lines.append(line)
+    code_only = "\n".join(code_only_lines)
+    assert "/home/agentuser/.claude" not in code_only, (
+        "wrapper still has an active --bind targeting /home/agentuser/.claude/ "
+        "— that target is incorrect since APPTAINERENV_HOME now sets in-container "
+        "HOME to the host path."
+    )
+
+
+def test_wrapper_claude_login_existence_gate_preserved():
+    """The 'run claude login first' message + exit 4 must still fire for
+    AGENT_NAME=claude when ~/.claude/.credentials.json is missing (the
+    pre-Sprint-1 user-onboarding flow)."""
+    text = load_template()
+    assert 'run \'claude login\' on submit node first' in text
+    assert "exit 4" in text
+
+
 def test_wrapper_binds_pi_agent_home():
     """Synthesis §3.10 + Sprint 1 Task 1.7: pi case binds host
     ~/.pi/agent into the container at the same path."""
@@ -303,3 +366,28 @@ def test_wrapper_exit_codes_cover_new_failures():
         (11, "HOME bind"),
     ):
         assert f"exit {code}" in text, f"missing exit {code} ({reason})"
+
+
+def test_wrapper_carries_install_dir_relocation_todo():
+    """Track the optional post-MVP design note: relocate
+    ~/.{claude,codex,pi,opencode} into <install_dir>/state/<agent>/
+    via per-agent env vars so the host $HOME isn't touched at all.
+    Documented inline in the wrapper template; tested here so the TODO
+    isn't silently dropped by a future cleanup pass."""
+    text = load_template()
+    assert "TODO (optional, post-MVP): relocate" in text, (
+        "Inline TODO about relocating agent state into install_dir was "
+        "removed. If you've actually done that work, also remove this test."
+    )
+    # Touch the four env vars by name so a future researcher grep'ing
+    # for them lands here.
+    for env_var in (
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
+        "PI_CODING_AGENT_DIR",
+        "OPENCODE_CONFIG_DIR",
+    ):
+        assert env_var in text, (
+            f"TODO comment should mention {env_var} as the relocation lever; "
+            "future implementers will grep for these."
+        )
