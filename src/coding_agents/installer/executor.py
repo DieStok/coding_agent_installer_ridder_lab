@@ -163,6 +163,11 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
         _phase("🔐  Emitting managed policy files…")
         await _emit_managed_policy(state, bundled, log)
 
+    # --- 8b. VSCode extension wrappers (stubs + helper + settings.json) ---
+    if state.mode != "local":
+        _phase("🪟  Wiring VSCode extension wrappers…")
+        await _emit_vscode_extension_wrappers(state, install_dir, log)
+
     # --- 9. Shell integration ---
     _phase("🐚  Setting up shell integration…")
     modified = await _run_in_thread(
@@ -965,3 +970,46 @@ async def _emit_managed_policy(state, bundled: Path, log: RichLog) -> None:
             target = home / ".codex" / "config.toml"
             install_codex_deny_paths(deny_rules_path, target)
             log.write(f"  [green]✓[/green] Codex sandbox config: {target}")
+
+
+async def _emit_vscode_extension_wrappers(
+    state, install_dir: Path, log: RichLog
+) -> None:
+    """Emit per-extension wrapper stubs + the shared agent-vscode helper +
+    merge wrapper hooks into the user's VSCode settings.json.
+
+    Wrap-eligible agents are those in ``state.agents`` that intersect with
+    the four supported VSCode extensions (Claude, Codex, OpenCode, Pi).
+    """
+    from coding_agents.installer.policy_emit import emit_managed_vscode_settings
+    from coding_agents.installer.wrapper_vscode import (
+        emit_agent_vscode_helper,
+        emit_extension_stubs,
+        emit_path_shim,
+    )
+
+    wrappable = {"claude", "codex", "opencode", "pi"}
+    agents = sorted(set(state.agents) & wrappable)
+    if not agents:
+        log.write("  [dim]No wrappable agents in selection — skipping VSCode wrappers[/dim]")
+        return
+
+    helper = emit_agent_vscode_helper(install_dir)
+    log.write(f"  [green]✓[/green] agent-vscode helper: {helper}")
+
+    written = emit_extension_stubs(install_dir, agents)
+    for path in written:
+        log.write(f"  [green]✓[/green] {path.name}")
+
+    if "opencode" in agents:
+        shim = emit_path_shim(install_dir)
+        log.write(f"  [green]✓[/green] OpenCode path-shim: {shim}")
+
+    settings_path = emit_managed_vscode_settings(install_dir, agents)
+    if settings_path is None:
+        log.write(
+            "  [yellow]⚠ No VSCode settings.json found yet — connect VSCode "
+            "to this host then run `coding-agents sync` to wire wrapper hooks.[/yellow]"
+        )
+    else:
+        log.write(f"  [green]✓[/green] VSCode wrapper hooks: {settings_path}")

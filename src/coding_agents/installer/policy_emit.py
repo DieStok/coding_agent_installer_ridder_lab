@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -213,3 +214,149 @@ def install_codex_sandbox_config(
 
 # Back-compat alias for one release; remove in next minor.
 install_codex_deny_paths = install_codex_sandbox_config
+
+
+# ---------------------------------------------------------------------------
+# VSCode settings.json emission
+# ---------------------------------------------------------------------------
+
+# Resolution chain for the user's ``settings.json`` (per brainstorm decision 6).
+# First existing path wins.
+_VSCODE_SETTINGS_CANDIDATES_ENV_KEY = "VSCODE_AGENT_FOLDER"
+_VSCODE_SETTINGS_CANDIDATES = (
+    "~/.cursor-server/data/User/settings.json",
+    "~/.vscode-server/data/User/settings.json",
+    "~/.vscode-server-insiders/data/User/settings.json",
+    "~/.windsurf-server/data/User/settings.json",
+    "~/.vscodium-server/data/User/settings.json",
+)
+
+
+def _resolve_vscode_settings_path(
+    target_settings_path: Path | None = None,
+) -> Path | None:
+    """Return the first existing VSCode settings.json on the resolution chain.
+
+    Returns ``None`` if no candidate exists; the caller decides whether to
+    skip the emit silently or surface a warning.
+    """
+    if target_settings_path is not None:
+        return target_settings_path
+
+    env_root = os.environ.get(_VSCODE_SETTINGS_CANDIDATES_ENV_KEY)
+    if env_root:
+        candidate = Path(env_root) / "data" / "User" / "settings.json"
+        if candidate.exists():
+            return candidate
+
+    home = Path.home()
+    for raw in _VSCODE_SETTINGS_CANDIDATES:
+        path = Path(str(raw).replace("~", str(home), 1))
+        if path.exists():
+            return path
+    return None
+
+
+def _vscode_wrapper_keys(install_dir: Path, agents: list[str]) -> dict[str, Any]:
+    """Build the wrapper-key dict to merge into the user's settings.json.
+
+    Each phase contributes its own subset of keys; this function gates by
+    the agent set so a Phase-1 install only emits Pi keys.
+    """
+    bin_dir = install_dir / "bin"
+    keys: dict[str, Any] = {}
+
+    if "pi" in agents:
+        keys["pi-vscode.path"] = str(bin_dir / "agent-pi-vscode")
+
+    if "claude" in agents:
+        keys["claudeCode.claudeProcessWrapper"] = str(bin_dir / "agent-claude-vscode")
+        # Defends against the wrapper-bypass-when-true gotcha (deep-research §5.5).
+        keys["claudeCode.useTerminal"] = False
+        keys["claudeCode.disableLoginPrompt"] = True
+        keys["claudeCode.initialPermissionMode"] = "acceptEdits"
+        # Anthropic claude-code#10217 deletes this key on activation; the env
+        # is already injected by agent-vscode via APPTAINERENV_*. Hint only.
+        keys["claudeCode.environmentVariables"] = [
+            {"name": "CLAUDE_CODE_ENTRYPOINT", "value": "claude-vscode"},
+        ]
+
+    if "codex" in agents:
+        keys["chatgpt.cliExecutable"] = str(bin_dir / "agent-codex-vscode")
+        keys["chatgpt.openOnStartup"] = False
+
+    if "opencode" in agents:
+        # Defence-in-depth: integrated terminal also gets the path-shim so a
+        # user typing ``opencode`` in a fresh integrated terminal hits our
+        # wrapper even before .bashrc is sourced.
+        keys["terminal.integrated.env.linux"] = {
+            "PATH": f"{bin_dir / 'path-shim'}:${{env:PATH}}",
+        }
+
+    return keys
+
+
+def emit_managed_vscode_settings(
+    install_dir: Path,
+    agents: list[str],
+    *,
+    target_settings_path: Path | None = None,
+) -> Path | None:
+    """Merge wrapper hooks into the user's VSCode settings.json.
+
+    Returns the resolved path on success, ``None`` if no settings.json
+    exists yet (user hasn't connected VSCode to this machine yet — caller
+    should warn but not fail).
+    """
+    from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.runtime.jsonc_merge import deep_merge_jsonc_settings
+
+    target = _resolve_vscode_settings_path(target_settings_path)
+    if target is None:
+        log.info("VSCode settings.json not found; skipping wrapper emit")
+        return None
+
+    keys = _vscode_wrapper_keys(install_dir, agents)
+    if not keys:
+        return None
+
+    if is_dry_run():
+        would(
+            "policy_emit",
+            "vscode_wrapper_settings",
+            path=target,
+            keys=sorted(keys.keys()),
+        )
+        return target
+
+    deep_merge_jsonc_settings(target, keys)
+    return target
+
+
+def unset_managed_vscode_settings(
+    target_settings_path: Path | None = None,
+) -> Path | None:
+    """Remove our wrapper keys from the user's settings.json (uninstall path).
+
+    Sets each key to ``null`` rather than deleting the line, since VSCode
+    treats ``null`` as "key absent" and the merge-on-uninstall is symmetric
+    with the merge-on-install.
+    """
+    target = _resolve_vscode_settings_path(target_settings_path)
+    if target is None or not target.exists():
+        return None
+
+    null_keys: dict[str, Any] = {
+        "pi-vscode.path": None,
+        "claudeCode.claudeProcessWrapper": None,
+        "claudeCode.useTerminal": None,
+        "claudeCode.disableLoginPrompt": None,
+        "claudeCode.initialPermissionMode": None,
+        "claudeCode.environmentVariables": None,
+        "chatgpt.cliExecutable": None,
+        "chatgpt.openOnStartup": None,
+        "terminal.integrated.env.linux": None,
+    }
+    from coding_agents.runtime.jsonc_merge import deep_merge_jsonc_settings
+    deep_merge_jsonc_settings(target, null_keys)
+    return target
