@@ -22,23 +22,21 @@ log = logging.getLogger("coding-agents")
 # Bash stubs — keep ASCII-only, no argv quoting trickery. ``$@`` carries the
 # extension's original argv unchanged; the Python helper then forwards that
 # argv to ``agent-<n>`` after ``-- ``.
+# `readlink -f` resolves symlinks so the OpenCode path-shim
+# (bin/path-shim/opencode → ../agent-opencode-vscode) finds
+# agent-vscode in bin/, not in path-shim/. The fallback to $0
+# keeps the non-symlinked case (direct invocation via VSCode
+# settings.json) working on systems without GNU readlink.
+_STUB = (
+    '#!/usr/bin/env bash\n'
+    'SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"\n'
+    'exec "$(dirname "$SELF")/agent-vscode" --agent {agent} -- "$@"\n'
+)
 EXTENSION_STUBS: dict[str, str] = {
-    "pi": (
-        '#!/usr/bin/env bash\n'
-        'exec "$(dirname "$0")/agent-vscode" --agent pi -- "$@"\n'
-    ),
-    "claude": (
-        '#!/usr/bin/env bash\n'
-        'exec "$(dirname "$0")/agent-vscode" --agent claude -- "$@"\n'
-    ),
-    "codex": (
-        '#!/usr/bin/env bash\n'
-        'exec "$(dirname "$0")/agent-vscode" --agent codex -- "$@"\n'
-    ),
-    "opencode": (
-        '#!/usr/bin/env bash\n'
-        'exec "$(dirname "$0")/agent-vscode" --agent opencode -- "$@"\n'
-    ),
+    "pi": _STUB.format(agent="pi"),
+    "claude": _STUB.format(agent="claude"),
+    "codex": _STUB.format(agent="codex"),
+    "opencode": _STUB.format(agent="opencode"),
 }
 
 

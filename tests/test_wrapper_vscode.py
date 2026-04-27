@@ -93,3 +93,43 @@ def test_path_shim_idempotent(install_dir):
 
 def test_extension_stubs_dict_has_four_entries():
     assert set(EXTENSION_STUBS.keys()) == {"pi", "claude", "codex", "opencode"}
+
+
+def test_stubs_resolve_symlinks_via_readlink(install_dir):
+    """Regression: bin/path-shim/opencode symlink → ../agent-opencode-vscode
+    needs the stub to resolve $0 through the symlink so it finds agent-vscode
+    in bin/, not in path-shim/. Checking that all four stubs use readlink."""
+    written = emit_extension_stubs(install_dir)
+    for stub in written:
+        content = stub.read_text()
+        assert "readlink -f" in content, (
+            f"{stub.name} must resolve symlinks via readlink -f so the "
+            f"OpenCode path-shim invocation finds agent-vscode in bin/"
+        )
+
+
+def test_opencode_path_shim_invocation_finds_agent_vscode(install_dir, tmp_path):
+    """End-to-end: write the OpenCode stub + path-shim symlink + a fake
+    agent-vscode, invoke through the symlink, and confirm bash resolves
+    to the real bin/agent-vscode (not bin/path-shim/agent-vscode)."""
+    import subprocess
+
+    emit_extension_stubs(install_dir, ["opencode"])
+    emit_path_shim(install_dir)
+
+    # Fake agent-vscode that just prints its own dir + args, so we can
+    # tell which path it was launched from.
+    helper = install_dir / "bin" / "agent-vscode"
+    helper.write_text(
+        '#!/usr/bin/env bash\n'
+        'echo "AGENT_VSCODE_DIR=$(dirname "$0")"\n'
+        'echo "AGENT_VSCODE_ARGS=$@"\n'
+    )
+    helper.chmod(0o755)
+
+    shim = install_dir / "bin" / "path-shim" / "opencode"
+    out = subprocess.run(
+        [str(shim), "--port", "1234"], capture_output=True, text=True, check=True
+    )
+    assert f"AGENT_VSCODE_DIR={install_dir / 'bin'}" in out.stdout, out.stdout
+    assert "--agent opencode -- --port 1234" in out.stdout, out.stdout

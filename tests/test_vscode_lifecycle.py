@@ -80,10 +80,13 @@ def test_uninstall_clears_wrapper_keys_and_cache(fake_home, install_dir, monkeyp
     agent_vscode.write_cache(cache_p, state)
 
     # Mock scancel so vscode_reset doesn't actually try.
-    import coding_agents.commands.vscode_reset as vr
-    vr.subprocess.run = lambda *a, **kw: subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="", stderr=""
-    )  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        ),
+    )
 
     # Drive the uninstall snippet directly (the full run_uninstall is wired
     # to ~/.coding-agents.json and an interactive prompt; we exercise just
