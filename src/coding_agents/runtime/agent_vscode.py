@@ -7,7 +7,11 @@ that VSCode launches when a user clicks Send in a coding-agent panel.
 
 Flow (see plan §"Proposed Solution"):
 
-    1.  ``CODING_AGENTS_NO_WRAP=1``     → exec npm-installed binary (no SIF).
+    1.  ``CODING_AGENTS_NO_WRAP=1``     → ``apptainer exec`` directly into
+                                           the SIF, bypassing the wrapper
+                                           template's preconditions but
+                                           keeping the SIF's deny rules +
+                                           ``--containall`` isolation.
     2.  ``SLURM_JOB_ID`` already set    → exec ``agent-<n>`` directly.
     3.  cache valid & job alive         → ``srun --jobid=$ID agent-<n>``.
     4.  no cache / dead job             → ``salloc --no-shell``, cache jobid,
@@ -29,6 +33,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -389,10 +394,103 @@ def exec_inner_wrapper(agent: str, agent_argv: list[str], install_dir: Path) -> 
     os.execv(str(target), [str(target), *agent_argv])
 
 
-def exec_no_wrap(agent: str, agent_argv: list[str], install_dir: Path) -> None:
-    """``exec`` the raw npm-installed binary (escape hatch)."""
-    target = install_dir / "node_modules" / ".bin" / agent
-    os.execv(str(target), [str(target), *agent_argv])
+DEFAULT_SIF_PATH = "/hpc/compgen/users/shared/agent/current.sif"
+
+# Per-agent config dirs bound rw under NO_WRAP so auth.json / config.toml are
+# reachable. Mirror with installer/agents.py:AGENTS["..."]["config_dir"] —
+# duplicated here on purpose to keep the runtime module stdlib-only (the
+# helper file is copied to <install_dir>/bin/agent-vscode and must not depend
+# on the rest of the package).
+NO_WRAP_AGENT_CONFIG_DIRS: dict[str, str] = {
+    "claude": "~/.claude",
+    "codex": "~/.codex",
+    "opencode": "~/.config/opencode",
+    "pi": "~/.pi/agent",
+}
+
+
+def resolve_sif_path() -> Path | None:
+    """Return the SIF path that NO_WRAP should exec into, or None.
+
+    Reads ``$AGENT_SIF`` (the same env var the wrapper template uses), then
+    falls back to the lab-shared default. ``None`` means we found no readable
+    SIF — caller should surface a structured error.
+    """
+    candidate = os.environ.get("AGENT_SIF") or DEFAULT_SIF_PATH
+    p = Path(candidate).expanduser()
+    if not p.exists():
+        return None
+    try:
+        return p.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+
+
+def exec_no_wrap(agent: str, agent_argv: list[str], install_dir: Path | None = None) -> None:
+    """Bypass the wrapper logic but stay inside the SIF.
+
+    Skips: SLURM auto-allocation, audit-log JSONL emission, lab cwd policy,
+    the wrapper template's bind-mount construction.
+
+    Keeps: SIF entry, baked-in deny rules, Apptainer's ``--containall`` +
+    ``--no-mount home,tmp`` isolation, version pinning.
+
+    Used for triage when a wrapper layer is suspect (e.g. "does the agent
+    work without our preconditions?"). Requires ``apptainer`` + the SIF to
+    be reachable on the current node — login nodes on the lab cluster
+    don't have apptainer, so NO_WRAP must run inside an ``srun --pty``
+    session (same constraint as the normal wrapped flow).
+
+    The ``install_dir`` argument is kept for back-compat with the previous
+    signature but unused — NO_WRAP no longer reaches the host npm-installed
+    binary.
+    """
+    sif = resolve_sif_path()
+    if sif is None:
+        sys.stderr.write(
+            "agent-vscode: CODING_AGENTS_NO_WRAP=1 set but no readable SIF found.\n"
+            f"  Tried $AGENT_SIF and {DEFAULT_SIF_PATH}.\n"
+            "  Source ~/.bashrc to pick up $AGENT_SIF, or run inside an srun shell.\n"
+        )
+        sys.exit(EXIT_NO_AGENT)
+
+    cwd = os.getcwd()
+    bind_args: list[str] = ["--bind", f"{cwd}:{cwd}:rw"]
+    config_dir_raw = NO_WRAP_AGENT_CONFIG_DIRS.get(agent)
+    if config_dir_raw:
+        config_dir = Path(_expand_path(config_dir_raw))
+        if config_dir.exists():
+            bind_args.extend(["--bind", f"{config_dir}:{config_dir}:rw"])
+
+    sys.stderr.write(
+        "agent-vscode: NO_WRAP=1 → bypassing wrapper template, "
+        "running inside SIF.\n"
+        "  Skipped: SLURM auto-srun, cwd policy, audit log, lab bind tables.\n"
+        "  Kept:    SIF entry, deny rules, --containall isolation, version pinning.\n"
+        f"  SIF:     {sif}\n"
+    )
+
+    apptainer = shutil.which("apptainer") or "apptainer"
+    apptainer_argv = [
+        apptainer, "exec",
+        "--containall",
+        "--no-mount", "home,tmp",
+        "--writable-tmpfs",
+        "--no-privs",
+        *bind_args,
+        str(sif),
+        agent,
+        *agent_argv,
+    ]
+    try:
+        os.execvp(apptainer, apptainer_argv)
+    except FileNotFoundError:
+        sys.stderr.write(
+            "agent-vscode: NO_WRAP=1 requires apptainer on PATH.\n"
+            "  This cluster only ships apptainer on compute nodes — run inside\n"
+            "  `srun --account=compgen --time=01:00:00 --mem=2G --pty bash` first.\n"
+        )
+        sys.exit(EXIT_NO_AGENT)
 
 
 def srun_inner(

@@ -241,24 +241,100 @@ def test_build_apptainer_binds_pi_extension(tmp_path, monkeypatch):
 # Top-level main() flow
 # --------------------------------------------------------------------------- #
 
-def test_main_no_wrap_execs_npm_bin(isolated_cache, install_dir, monkeypatch):
+def test_main_no_wrap_execs_apptainer(isolated_cache, install_dir, monkeypatch, tmp_path):
+    """NO_WRAP=1 routes through the SIF via `apptainer exec`, not the host npm bin."""
     monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
-    npm_bin = install_dir / "node_modules" / ".bin" / "claude"
-    npm_bin.parent.mkdir(parents=True)
-    npm_bin.write_text("#!/bin/sh\necho npm\n")
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    monkeypatch.setenv("AGENT_SIF", str(sif))
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     captured: dict = {}
 
-    def fake_execv(path, argv):
-        captured["path"] = path
+    def fake_execvp(file, argv):
+        captured["file"] = file
         captured["argv"] = argv
         raise SystemExit(0)
 
-    monkeypatch.setattr(os, "execv", fake_execv)
+    monkeypatch.setattr(os, "execvp", fake_execvp)
     with pytest.raises(SystemExit):
         agent_vscode.main(["--agent", "claude", "--", "--version"])
-    assert captured["path"] == str(npm_bin)
-    assert captured["argv"][1:] == ["--version"]
+    # apptainer exec ... <sif> claude --version
+    assert "apptainer" in captured["file"] or captured["file"].endswith("apptainer")
+    assert captured["argv"][1] == "exec"
+    assert "--containall" in captured["argv"]
+    assert "--no-mount" in captured["argv"]
+    # SIF + agent name + forwarded argv at the tail
+    assert str(sif.resolve()) in captured["argv"]
+    assert captured["argv"][-2] == "claude"
+    assert captured["argv"][-1] == "--version"
+
+
+def test_main_no_wrap_falls_back_to_default_sif(isolated_cache, install_dir, monkeypatch, tmp_path):
+    """When AGENT_SIF is unset, fall back to DEFAULT_SIF_PATH."""
+    monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
+    monkeypatch.delenv("AGENT_SIF", raising=False)
+    fake_default = tmp_path / "default.sif"
+    fake_default.write_bytes(b"\0")
+    monkeypatch.setattr(agent_vscode, "DEFAULT_SIF_PATH", str(fake_default))
+    monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
+    captured: dict = {}
+
+    def fake_execvp(file, argv):
+        captured["argv"] = argv
+        raise SystemExit(0)
+
+    monkeypatch.setattr(os, "execvp", fake_execvp)
+    with pytest.raises(SystemExit):
+        agent_vscode.main(["--agent", "pi"])
+    assert str(fake_default.resolve()) in captured["argv"]
+
+
+def test_main_no_wrap_no_sif_clear_error(isolated_cache, install_dir, monkeypatch, tmp_path):
+    """When no SIF is readable, NO_WRAP exits cleanly with EXIT_NO_AGENT."""
+    monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
+    monkeypatch.setenv("AGENT_SIF", str(tmp_path / "missing.sif"))  # doesn't exist
+    monkeypatch.setattr(agent_vscode, "DEFAULT_SIF_PATH", str(tmp_path / "also-missing.sif"))
+    monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
+
+    def boom(*a, **kw):
+        raise AssertionError("execvp should not be called when no SIF is readable")
+
+    monkeypatch.setattr(os, "execvp", boom)
+    with pytest.raises(SystemExit) as exc_info:
+        agent_vscode.main(["--agent", "codex"])
+    assert exc_info.value.code == agent_vscode.EXIT_NO_AGENT
+
+
+def test_main_no_wrap_minimal_binds_only_cwd_and_config(isolated_cache, install_dir, monkeypatch, tmp_path):
+    """NO_WRAP binds cwd + agent config dir only — no audit-log, no secrets."""
+    monkeypatch.setenv("CODING_AGENTS_NO_WRAP", "1")
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    monkeypatch.setenv("AGENT_SIF", str(sif))
+
+    fake_home = tmp_path / "home"
+    (fake_home / ".codex").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+    monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
+    captured: dict = {}
+
+    def fake_execvp(file, argv):
+        captured["argv"] = argv
+        raise SystemExit(0)
+
+    monkeypatch.setattr(os, "execvp", fake_execvp)
+    with pytest.raises(SystemExit):
+        agent_vscode.main(["--agent", "codex"])
+    argv = captured["argv"]
+    # cwd bound rw
+    assert any(arg == f"{os.getcwd()}:{os.getcwd()}:rw" for arg in argv)
+    # ~/.codex bound rw (the only config-dir bind for codex)
+    assert any(str(fake_home / ".codex") in arg for arg in argv)
+    # No audit-log dir, no /etc/* TLS binds, no skills dir — those are all
+    # wrapper-template responsibilities and NO_WRAP skips them.
+    assert not any("/etc/ssl" in arg for arg in argv)
+    assert not any("agent-logs" in arg for arg in argv)
 
 
 def test_main_slurm_set_execs_inner_wrapper(isolated_cache, install_dir, monkeypatch):
