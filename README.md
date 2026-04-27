@@ -29,14 +29,14 @@ command for anything missing (see Quick Start, step 2).
 | `curl` | Claude Code's native installer; also used by `uv`, `entire`, etc. |
 | `bash` | Running the installer and its hooks/wrappers |
 | `unzip`, `tar` | Extracting the `hpc-cluster.skill` archive and various tool tarballs |
-| Node.js + `npm` | Codex, OpenCode, Pi, Gemini, Amp, biome, agent-browser |
+| Node.js + `npm` | **HPC mode**: only needed for host-side tools (`@biomejs/biome`, `agent-browser`, `claude-statusbar`). Codex, OpenCode, Pi run from the SIF and don't require host node. **Local mode**: needed for every npm-installed agent. |
 | Python ≥ 3.12 | Running the `coding-agents` CLI itself (enforced by `pyproject.toml`) |
 | `uv` | Installing this package and managing the tools venv (ruff, vulture, pyright, yamllint, crawl4ai) + `claude-statusbar` |
 
 Things the installer *does* handle for you once the above are present: the
-Claude Code binary (`curl … | bash`), every npm-installed agent, the Python
-tools venv, `@biomejs/biome`, `agent-browser`, `shellcheck`, the `entire`
-CLI, and `claude-statusbar`.
+Claude Code binary (`curl … | bash`), Codex/OpenCode/Pi (already baked into
+the SIF — no install step), the Python tools venv, `@biomejs/biome`,
+`agent-browser`, `shellcheck`, the `entire` CLI, and `claude-statusbar`.
 
 ### What is already there on the UMC Utrecht HPC submit nodes
 
@@ -135,8 +135,12 @@ extensions' "spawn" hooks into our SIF wrapper:
   existing terminal `agent-<n>` wrapper. The session is keyed by
   `VSCODE_GIT_IPC_HANDLE` (or `VSCODE_PID`, falling back to ppid) so a
   worker restart inside the extension host doesn't re-allocate a job.
-- Set `CODING_AGENTS_NO_WRAP=1` to bypass the wrap entirely (escape hatch
-  for debugging — `doctor` surfaces it as a warning).
+- Set `CODING_AGENTS_NO_WRAP=1` to bypass the **wrapper template** (cwd
+  policy, audit-log JSONL, lab bind tables, SLURM auto-srun) for triage —
+  the agent **still runs inside the SIF** via direct `apptainer exec`,
+  so the deny rules and `--containall` isolation are preserved. Requires
+  `apptainer` on PATH (lab cluster: only available inside `srun --pty`).
+  `doctor` surfaces this with a warn row when set.
 - Run `coding-agents vscode-reset` if a session goes wrong (e.g. after
   VSCode restart while a salloc was retrying); next spawn re-allocates fresh.
 

@@ -41,9 +41,32 @@ responds.
 ## How to bypass
 
 Set `CODING_AGENTS_NO_WRAP=1` in the environment of whatever VSCode
-session you want unwrapped. The helper exec's the npm-installed binary
-directly without SLURM. `coding-agents doctor` will surface this as a
-warning so you don't forget you set it.
+session you want unwrapped. **What this skips and what it keeps:**
+
+| Skipped (wrapper template's job) | Preserved (SIF + apptainer's job) |
+|---|---|
+| SLURM auto-srun + jobid cache | The SIF (deny rules, `--containall`, `--no-mount home,tmp`) |
+| `cwd` lab-policy refusal | Apptainer's bind-mount discipline + `--no-privs` |
+| Audit-log JSONL emission | Version pinning (codex/opencode/pi/claude all SIF-baked) |
+| Per-agent lab bind tables (`~/.claude`, `~/.cache`, `/etc/ssl`, …) | Cwd + agent's config dir bound rw (minimal) |
+
+The helper does `apptainer exec --containall --no-mount home,tmp <sif>
+<agent> ARGV` directly. Use it for **wrapper-vs-agent triage** ("does the
+agent itself work without our wrapper preconditions?"), not as a way to
+escape sandboxing — the SIF still constrains the agent.
+
+**Requires apptainer on PATH.** On clusters where apptainer is
+compute-only (the lab cluster does this), NO_WRAP=1 must run inside an
+`srun --pty` shell:
+
+```bash
+srun --account=compgen --time=01:00:00 --mem=2G --cpus-per-task=2 --pty bash
+export CODING_AGENTS_NO_WRAP=1
+# ... open a sidebar, send a message ...
+```
+
+`coding-agents doctor` surfaces a warn row when `NO_WRAP=1` is set so
+you don't forget.
 
 ## How to reset
 
@@ -145,6 +168,41 @@ the **first existing** path in this order:
 Only one settings.json is patched. If you use multiple IDEs and want
 both to receive the wrapper hooks, set `VSCODE_AGENT_FOLDER` per-IDE in
 your shell startup and run `coding-agents sync` from each.
+
+## SIF-builder requirements (lab admin)
+
+The host install no longer runs `npm install` for codex/opencode/pi —
+those agents come from the SIF. The lab admin's SIF build recipe must
+therefore include:
+
+```bash
+# Inside the SIF builder %post / setup section, after npm + the agent
+# CLIs are installed (claude, codex, opencode, pi):
+
+# 1. Bake the four lab-default Pi extensions into the SIF's global
+#    npm root (npm root -g resolves inside the SIF).
+pi install npm:pi-ask-user
+pi install npm:pi-subagents
+pi install npm:pi-web-access
+pi install npm:pi-mcp-adapter
+
+# 2. Capture the resulting settings.json as the SIF-side default —
+#    the wrapper template copies this to each user's ~/.pi/agent/
+#    on their first Pi sidebar message.
+mkdir -p /opt
+cp ~/.pi/agent/settings.json /opt/pi-default-settings.json
+chmod 644 /opt/pi-default-settings.json
+```
+
+Verify after build with `coding-agents doctor` — the **"Pi defaults
+baked in SIF"** row should be PASS. If it's WARN, the wrapper-template
+first-run hook will silently no-op for fresh users (Pi still works,
+just without the four lab default extensions).
+
+When you add a new lab default extension later, repeat steps 1+2 and
+rebuild the SIF; existing users keep their current settings until they
+either run a `coding-agents pi-refresh-defaults` (future command) or
+manually edit `~/.pi/agent/settings.json`.
 
 ## See also
 
