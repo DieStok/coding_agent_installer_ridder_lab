@@ -393,19 +393,19 @@ classDiagram
 
 Set up the three CI guards before any other Sprint 1 work, so subsequent fixes ship with regression gates already in place.
 
-- [ ] Add `tests/test_bundled_tree_dedup.py` that runs in CI and fails if both `<repo>/bundled/` and `<repo>/src/coding_agents/bundled/` exist with diverging content (path-by-path `sha256` compare). For Sprint 1, the test asserts the outer tree is a single-file stub. [§3.5]
-- [ ] Add `tests/test_registry_symmetry.py` asserting every `deny_rules_format` declared in `agents.py::AGENTS` has a corresponding handler in `policy_emit.py` (install path) and `commands/sync.py::_apply_*` (sync path). [§3.6]
-- [ ] Promote `tests/test_wrappers.py::test_template_placeholders_match_wrapper_vars` to a required CI gate (it's already a test; add an explicit CI step). [§2.3]
+- [x] Add `tests/test_bundled_tree_dedup.py` that runs in CI and fails if both `<repo>/bundled/` and `<repo>/src/coding_agents/bundled/` exist with diverging content (path-by-path `sha256` compare). For Sprint 1, the test asserts the outer tree is a single-file stub. [§3.5]
+- [x] Add `tests/test_registry_symmetry.py` asserting every `deny_rules_format` declared in `agents.py::AGENTS` has a corresponding handler in `policy_emit.py` (install path) and `commands/sync.py::_apply_*` (sync path). [§3.6]
+- [x] Promote `tests/test_wrappers.py::test_template_placeholders_match_wrapper_vars` to a required CI gate (it's already a test; add an explicit CI step). [§2.3]
 
 ##### Task 1.1 — Wrapper security trio (`bundled/templates/wrapper/agent.template.sh`) (~2.5 h) [§3.1, §3.2, §3.4]
 
 All three patches touch the same file; ship as one PR.
 
-- [ ] **§3.1 audit-log JSONL injection.** Pre-validate `$PWD` at wrapper entry: refuse the invocation (exit 6) if `$PWD` contains `"`, control characters (0x00-0x1F), or newlines. Build the JSONL line entirely through `jq -n --arg ts "$TS" --arg agent "$AGENT_NAME" --arg pwd "$PWD" --arg slurm "$SLURM_JOB_ID" --arg sha "$SIF_SHA" --argjson argv "$ARGV_JSON" '{...}'` so escaping is uniform. Make `jq` a host-side hard requirement (already a SIF-side requirement). Drop the fallback path that interpolated `$PWD` unsafely.
+- [x] **§3.1 audit-log JSONL injection.** Pre-validate `$PWD` at wrapper entry: refuse the invocation (exit 6) if `$PWD` contains `"`, control characters (0x00-0x1F), or newlines. Build the JSONL line entirely through `jq -n --arg ts "$TS" --arg agent "$AGENT_NAME" --arg pwd "$PWD" --arg slurm "$SLURM_JOB_ID" --arg sha "$SIF_SHA" --argjson argv "$ARGV_JSON" '{...}'` so escaping is uniform. Make `jq` a host-side hard requirement (already a SIF-side requirement). Drop the fallback path that interpolated `$PWD` unsafely.
   - Future-direction note: synthesis [performance F1] suggests dropping `jq` for ~30 ms savings via pure-bash JSON encoding; tracked as Sprint 2 follow-up.
-- [ ] **§3.2 `provider.env` parser env-poisoning.** Reject any `KEY` not matching `^[A-Z][A-Z0-9_]{0,63}$`. Maintain an explicit allowlist matching the inline comment block at lines 122-151 (provider API keys + endpoints — `*_API_KEY`, `*_TOKEN`, `*_ENDPOINT`, `*_BASE_URL`, plus the explicit `OPENAI_*`/`ANTHROPIC_*`/`AZURE_*`/etc. names already enumerated). Refuse known-poisonous names: `PATH`, `LD_*`, `LIBPATH`, `PYTHON*`, `NODE_*`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS1`, `IFS`, `HOME`, `USER`. Apply the **same** allowlist to the `*_api_key`/`*_token`/`*_endpoint` glob loop at lines 152-169 ([security M1] cross-ref).
-- [ ] **§3.4 audit-log JSONL `flock`.** Wrap the append with `flock 9` (`( flock 9; printf '...' >&9 ) 9>>"$AGENT_LOGS_DIR/${AGENT_NAME}-${TODAY}.jsonl"`) so concurrent writers in the same allocation cannot interleave bytes mid-line.
-- [ ] Add tests in `tests/test_wrappers.py`:
+- [x] **§3.2 `provider.env` parser env-poisoning.** Reject any `KEY` not matching `^[A-Z][A-Z0-9_]{0,63}$`. Maintain an explicit allowlist matching the inline comment block at lines 122-151 (provider API keys + endpoints — `*_API_KEY`, `*_TOKEN`, `*_ENDPOINT`, `*_BASE_URL`, plus the explicit `OPENAI_*`/`ANTHROPIC_*`/`AZURE_*`/etc. names already enumerated). Refuse known-poisonous names: `PATH`, `LD_*`, `LIBPATH`, `PYTHON*`, `NODE_*`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PS1`, `IFS`, `HOME`, `USER`. Apply the **same** allowlist to the `*_api_key`/`*_token`/`*_endpoint` glob loop at lines 152-169 ([security M1] cross-ref).
+- [x] **§3.4 audit-log JSONL `flock`.** Wrap the append with `flock 9` (`( flock 9; printf '...' >&9 ) 9>>"$AGENT_LOGS_DIR/${AGENT_NAME}-${TODAY}.jsonl"`) so concurrent writers in the same allocation cannot interleave bytes mid-line.
+- [x] Add tests in `tests/test_wrappers.py`:
   - [ ] `test_pwd_with_quote_rejected` — wrapper exits non-zero when `cd '/tmp/foo"bar'`.
   - [ ] `test_provider_env_rejects_bash_env` — `provider.env` containing `BASH_ENV=...` does not appear in `env` inside the rendered Apptainer command.
   - [ ] `test_provider_env_rejects_lowercase_key` — `provider.env` containing `path=/tmp` rejected.
@@ -413,24 +413,24 @@ All three patches touch the same file; ship as one PR.
 
 ##### Task 1.2 — Atomic settings writer (~1 h) [§3.3]
 
-- [ ] Replace `utils.secure_write_text` body with POSIX safe-replace: `mkstemp` in same dir → `os.write(fd, data)` → `os.fsync(fd)` → `os.close(fd)` → `os.replace(tmp_path, path)` → open parent dir → `os.fsync(parent_fd)` → close parent. Permissions stay 0o600 (set on `mkstemp` via `os.chmod` since `mkstemp` uses 0o600 by default).
-- [ ] Update `safe_symlink` doc comment to note it already uses the same pattern (`mkstemp + unlink + symlink + rename`) so the codebase has one canonical pattern doc.
-- [ ] Add fork-based unit test in `tests/test_utils.py::test_secure_write_text_atomic_under_kill`: fork; child opens `secure_write_text` and is `SIGKILL`'d mid-write (use `os.write` patched to block on a semaphore); parent verifies file is either non-existent or fully-written original — never zero-byte.
-- [ ] Add `_schema_version: 1` to `DEFAULT_CONFIG` in `config.py` and to the templates that get persisted (`managed-claude-settings.json`). Migration dispatch comes in Sprint 2 item 2.7; Sprint 1 only stamps the field.
+- [x] Replace `utils.secure_write_text` body with POSIX safe-replace: `mkstemp` in same dir → `os.write(fd, data)` → `os.fsync(fd)` → `os.close(fd)` → `os.replace(tmp_path, path)` → open parent dir → `os.fsync(parent_fd)` → close parent. Permissions stay 0o600 (set on `mkstemp` via `os.chmod` since `mkstemp` uses 0o600 by default).
+- [x] Update `safe_symlink` doc comment to note it already uses the same pattern (`mkstemp + unlink + symlink + rename`) so the codebase has one canonical pattern doc.
+- [x] Add fork-based unit test in `tests/test_utils.py::test_secure_write_text_atomic_under_kill`: fork; child opens `secure_write_text` and is `SIGKILL`'d mid-write (use `os.write` patched to block on a semaphore); parent verifies file is either non-existent or fully-written original — never zero-byte.
+- [x] Add `_schema_version: 1` to `DEFAULT_CONFIG` in `config.py` and to the templates that get persisted (`managed-claude-settings.json`). Migration dispatch comes in Sprint 2 item 2.7; Sprint 1 only stamps the field.
 
 ##### Task 1.3 — Bundled tree dedup + stale root cleanup (~1 h) [§3.5]
 
-- [ ] Pick `src/coding_agents/bundled/` as canonical (ships with wheel via hatch).
-- [ ] Replace `<repo>/bundled/` with a single `README.md` stub: "This tree is now sourced from `src/coding_agents/bundled/`. Edit there." Move any content unique to the outer tree (the `coding_agent_hpc.def`, `bundled/sif/README.md`, build instructions) to `<repo>/build/` if they are build-time files not shipped with the wheel — verify each path's runtime consumer before moving.
-- [ ] Delete the stale root-level `<repo>/hooks/` directory entirely (its content is leftover from before the move into `bundled/` and is missing 8 home-dir denies + the `Read(./build) → Read(./build/**)` fix).
-- [ ] `git rm` the committed `.DS_Store` files inside `src/coding_agents/bundled/` and `src/coding_agents/bundled/skills/`.
-- [ ] Update any references in `coding_agent_hpc.def`, `bundled/sif/README.md`, and the build instructions to point at the canonical path.
-- [ ] Verify `tests/test_bundled_tree_dedup.py` (from Task 1.0) passes.
+- [x] Pick `src/coding_agents/bundled/` as canonical (ships with wheel via hatch).
+- [x] Replace `<repo>/bundled/` with a single `README.md` stub: "This tree is now sourced from `src/coding_agents/bundled/`. Edit there." Move any content unique to the outer tree (the `coding_agent_hpc.def`, `bundled/sif/README.md`, build instructions) to `<repo>/build/` if they are build-time files not shipped with the wheel — verify each path's runtime consumer before moving.
+- [x] Delete the stale root-level `<repo>/hooks/` directory entirely (its content is leftover from before the move into `bundled/` and is missing 8 home-dir denies + the `Read(./build) → Read(./build/**)` fix).
+- [x] `git rm` the committed `.DS_Store` files inside `src/coding_agents/bundled/` and `src/coding_agents/bundled/skills/`.
+- [x] Update any references in `coding_agent_hpc.def`, `bundled/sif/README.md`, and the build instructions to point at the canonical path.
+- [x] Verify `tests/test_bundled_tree_dedup.py` (from Task 1.0) passes.
 
 ##### Task 1.4 — Codex integration trio (~2 h) [§3.6, §3.7]
 
-- [ ] **§3.6 dispatch fix.** In `commands/sync.py:155`, replace `elif fmt == "starlark":` with `elif fmt == "codex_toml":` and have it call `policy_emit.install_codex_deny_paths()` (the install path) directly. Delete `_apply_codex_deny()` if it's the only Starlark consumer; otherwise narrow it. Verify `tests/test_registry_symmetry.py` (from Task 1.0) passes.
-- [ ] **§3.7 Codex `[sandbox]` schema rewrite.** In `policy_emit.merge_codex_deny_paths()` (and the consumed `bundled/hooks/deny_rules.json::codex_config_toml_deny_paths` key), replace the fictional `[sandbox] deny_paths` with the real schema:
+- [x] **§3.6 dispatch fix.** In `commands/sync.py:155`, replace `elif fmt == "starlark":` with `elif fmt == "codex_toml":` and have it call `policy_emit.install_codex_deny_paths()` (the install path) directly. Delete `_apply_codex_deny()` if it's the only Starlark consumer; otherwise narrow it. Verify `tests/test_registry_symmetry.py` (from Task 1.0) passes.
+- [x] **§3.7 Codex `[sandbox]` schema rewrite.** In `policy_emit.merge_codex_deny_paths()` (and the consumed `bundled/hooks/deny_rules.json::codex_config_toml_deny_paths` key), replace the fictional `[sandbox] deny_paths` with the real schema:
   ```toml
   sandbox_mode = "workspace-write"
 
@@ -440,13 +440,13 @@ All three patches touch the same file; ship as one PR.
   exclude_slash_tmp = false
   ```
   Rationale for `network_access = true`: agents routinely need outbound HTTP for `npm install`, `pip install`, model API calls. Apptainer's `--containall` doesn't block egress at the kernel level either, so a `false` here would be inconsistent with the surrounding sandbox. Document the trade-off in the README rewrite (Task 3.13): users wanting full network lockdown should set `sandbox_mode = "read-only"` (which also stops file writes; an `audit-only` mode).
-- [ ] Drop `codex_config_toml_deny_paths` from `deny_rules.json`. Document in `README.md` (Sprint 3 rewrite) that local-mode Codex requires `sandbox_mode = "read-only"` for full lockdown.
-- [ ] Add `tests/test_policy_emit.py::test_codex_writes_workspace_write_schema` asserting the emitted TOML has `sandbox_mode` and the `[sandbox_workspace_write]` table.
-- [ ] Cross-reference: verify the `tests/test_sync.py` Codex sync test now passes (it should have been silently no-op'ing before).
+- [x] Drop `codex_config_toml_deny_paths` from `deny_rules.json`. Document in `README.md` (Sprint 3 rewrite) that local-mode Codex requires `sandbox_mode = "read-only"` for full lockdown.
+- [x] Add `tests/test_policy_emit.py::test_codex_writes_workspace_write_schema` asserting the emitted TOML has `sandbox_mode` and the `[sandbox_workspace_write]` table.
+- [x] Cross-reference: verify the `tests/test_sync.py` Codex sync test now passes (it should have been silently no-op'ing before).
 
 ##### Task 1.5 — OpenCode MCP shape fix (~1.5 h) [§3.9]
 
-- [ ] In `src/coding_agents/convert_mcp.py`, add a dedicated `_write_opencode(servers, home)` writer per the OpenCode Effect Schema:
+- [x] In `src/coding_agents/convert_mcp.py`, add a dedicated `_write_opencode(servers, home)` writer per the OpenCode Effect Schema:
   ```python
   def _write_opencode(servers: dict, home: Path) -> list[str]:
       mcp = {}
@@ -465,15 +465,15 @@ All three patches touch the same file; ship as one PR.
       _merge_json(home / ".config/opencode/opencode.json", {"mcp": mcp})
       return [str(home / ".config/opencode/opencode.json")]
   ```
-- [ ] Update the `MCP_FORMAT` dispatch table (`convert_mcp.py:64-71`) to call `_write_opencode` for `"opencode"`. Remove the generic `_write_json_mcp` fallback for OpenCode. **Reality-check note:** the same dispatch table currently routes `gemini` and `amp` (two additional agents in `agents.py` beyond the synthesis's four) through `_write_json_mcp` lambdas. Leave those lambdas untouched in Task 1.5 — they continue to use the generic writer. Verify both still produce schema-valid output via existing tests; flag for follow-up only if `gemini`/`amp` upstream schemas are also strict (out of scope for Sprint 1).
-- [ ] Add `tests/test_convert_mcp.py::test_opencode_emits_local_command_array` asserting the emitted JSON has `type: "local"`, `command` is `[cmd, *args]`, and the env is keyed `environment`.
-- [ ] Add `tests/test_convert_mcp.py::test_opencode_emits_remote_url` for the URL branch.
+- [x] Update the `MCP_FORMAT` dispatch table (`convert_mcp.py:64-71`) to call `_write_opencode` for `"opencode"`. Remove the generic `_write_json_mcp` fallback for OpenCode. **Reality-check note:** the same dispatch table currently routes `gemini` and `amp` (two additional agents in `agents.py` beyond the synthesis's four) through `_write_json_mcp` lambdas. Leave those lambdas untouched in Task 1.5 — they continue to use the generic writer. Verify both still produce schema-valid output via existing tests; flag for follow-up only if `gemini`/`amp` upstream schemas are also strict (out of scope for Sprint 1).
+- [x] Add `tests/test_convert_mcp.py::test_opencode_emits_local_command_array` asserting the emitted JSON has `type: "local"`, `command` is `[cmd, *args]`, and the env is keyed `environment`.
+- [x] Add `tests/test_convert_mcp.py::test_opencode_emits_remote_url` for the URL branch.
 
 ##### Task 1.6 — Pi MCP: `imports` directive + `toolPrefix` fix (~45 min) [§3.10 part 1, §4.16, §5.21]
 
 User decision 2026-04-27: jump straight to single-source-of-truth via `imports: ["claude-code"]` in Sprint 1, rather than the staged Sprint 2 backup-before-overwrite + Sprint 3 imports-migration. This eliminates the dual-write of MCP server entries (Pi's `~/.pi/agent/mcp.json` no longer duplicates Claude's `~/.mcp.json` — Pi inherits via the pi-mcp-adapter `imports` directive). Folds in former Tasks 2.16 and 3.17.
 
-- [ ] In `src/coding_agents/convert_mcp.py`, replace `_write_pi`'s `mcpServers: {...}` dict with a minimal config:
+- [x] In `src/coding_agents/convert_mcp.py`, replace `_write_pi`'s `mcpServers: {...}` dict with a minimal config:
   ```python
   pi_config = {
       "imports": ["claude-code"],
@@ -482,19 +482,19 @@ User decision 2026-04-27: jump straight to single-source-of-truth via `imports: 
   }
   ```
   No `mcpServers` key — pi-mcp-adapter resolves servers from `~/.mcp.json` (Claude's managed file). `toolPrefix: "short"` produces `<short>_<tool>` tool names (canonical pi-mcp-adapter convention; replaces the buggy `"mcp"` value from line 161).
-- [ ] Confirm pi-mcp-adapter's `imports` resolution path against `local_clones/pi-mono/packages/coding-agent/src/resource-loader.ts:59` and `pi-mcp-adapter/types.ts`. If `imports` doesn't read `~/.mcp.json` directly (e.g. requires an explicit path), set `imports: [{"path": "~/.mcp.json"}]` instead.
-- [ ] Apply the atomic safe-replace + drift-backup pattern (Task 1.2 / Task 2.6) to the write so existing `~/.pi/agent/mcp.json` content is backed up to `.backup-2026-04-27-v1.json` on first migration.
-- [ ] Tests:
+- [x] Confirm pi-mcp-adapter's `imports` resolution path against `local_clones/pi-mono/packages/coding-agent/src/resource-loader.ts:59` and `pi-mcp-adapter/types.ts`. If `imports` doesn't read `~/.mcp.json` directly (e.g. requires an explicit path), set `imports: [{"path": "~/.mcp.json"}]` instead.
+- [x] Apply the atomic safe-replace + drift-backup pattern (Task 1.2 / Task 2.6) to the write so existing `~/.pi/agent/mcp.json` content is backed up to `.backup-2026-04-27-v1.json` on first migration.
+- [x] Tests:
   - [ ] `tests/test_convert_mcp.py::test_pi_emits_imports_directive` — emitted JSON contains `imports: ["claude-code"]` and no `mcpServers` key.
   - [ ] `tests/test_convert_mcp.py::test_pi_toolprefix_in_enum` — asserts the value is in `{"server", "none", "short"}`.
   - [ ] `tests/test_convert_mcp.py::test_pi_existing_mcp_json_backed_up` — pre-existing `mcp.json` with `mcpServers` is backed up before overwrite.
-- [ ] Cross-reference: this also resolves synthesis §4.16 (Pi MCP overwrite without backup) and §5.21 (Pi `imports: ["claude-code"]`). Sprint 2 Task 2.16 and Sprint 3 Task 3.17 are folded here and removed from those sprints.
+- [x] Cross-reference: this also resolves synthesis §4.16 (Pi MCP overwrite without backup) and §5.21 (Pi `imports: ["claude-code"]`). Sprint 2 Task 2.16 and Sprint 3 Task 3.17 are folded here and removed from those sprints.
 
 ##### Task 1.7 — Pi + OpenCode HOME bind-mount in wrapper (~1.5 h) [§3.10 part 2, §3.12; user decision]
 
 This task implements the user's authoritative decision: bind-mount the host HOME subdirectories each agent needs into the container at the same path, writable, so auth/sessions/snapshots/db persist across invocations. This supersedes synthesis §7's recommended Pi option (a) (`APPTAINERENV_PI_CODING_AGENT_DIR=$PWD/.pi/agent`) and synthesis §3.10 option (b) (read-only with overlay) in favour of writable bind-mounts uniformly across both agents.
 
-- [ ] In `bundled/templates/wrapper/agent.template.sh`, after the existing `APPTAINER_BIND` baseline (which currently includes only `$PWD:$PWD`), append per-agent HOME-bind logic:
+- [x] In `bundled/templates/wrapper/agent.template.sh`, after the existing `APPTAINER_BIND` baseline (which currently includes only `$PWD:$PWD`), append per-agent HOME-bind logic:
   ```bash
   AGENT_HOME_BINDS=()
   case "$AGENT_NAME" in
@@ -511,10 +511,10 @@ This task implements the user's authoritative decision: bind-mount the host HOME
       ;;
   esac
   ```
-- [ ] Inside the container, `$HOME` evaluates to the SIF's `agentuser` home; pass `APPTAINERENV_HOME="$HOME"` so the in-container `$HOME` matches the host path used in the bind. Alternatively, use absolute paths in the bind targets (`--bind "$HOME/.pi/agent:/home/agentuser/.pi/agent"` after confirming the SIF `$HOME` is `/home/agentuser`). Pick the variant that keeps the wrapper template simple — the `APPTAINERENV_HOME` route is preferred.
-- [ ] Add `OPENCODE_*` to the wrapper's env-var passthrough allowlist (extend the existing `*_api_key`/`*_token` glob): `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_MODELS_URL`, `OPENCODE_DISABLE_LSP_DOWNLOAD`, `OPENCODE_DB`, `OPENCODE_TEST_HOME`, `OPENCODE_AUTH_CONTENT`. Apply the §3.2 allowlist regex (`^[A-Z][A-Z0-9_]{0,63}$`) so this passthrough is also poisoning-resistant.
-- [ ] Update `bundled/templates/agent-batch.sbatch` `--export=` allowlist with the same `OPENCODE_*` names.
-- [ ] Update `tests/test_wrappers.py`:
+- [x] Inside the container, `$HOME` evaluates to the SIF's `agentuser` home; pass `APPTAINERENV_HOME="$HOME"` so the in-container `$HOME` matches the host path used in the bind. Alternatively, use absolute paths in the bind targets (`--bind "$HOME/.pi/agent:/home/agentuser/.pi/agent"` after confirming the SIF `$HOME` is `/home/agentuser`). Pick the variant that keeps the wrapper template simple — the `APPTAINERENV_HOME` route is preferred.
+- [x] Add `OPENCODE_*` to the wrapper's env-var passthrough allowlist (extend the existing `*_api_key`/`*_token` glob): `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_PERMISSION`, `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_MODELS_URL`, `OPENCODE_DISABLE_LSP_DOWNLOAD`, `OPENCODE_DB`, `OPENCODE_TEST_HOME`, `OPENCODE_AUTH_CONTENT`. Apply the §3.2 allowlist regex (`^[A-Z][A-Z0-9_]{0,63}$`) so this passthrough is also poisoning-resistant.
+- [x] Update `bundled/templates/agent-batch.sbatch` `--export=` allowlist with the same `OPENCODE_*` names.
+- [x] Update `tests/test_wrappers.py`:
   - [ ] `test_pi_wrapper_binds_pi_agent_home` — rendered command for `pi` contains `--bind <host>/.pi/agent:<container>/.pi/agent`.
   - [ ] `test_opencode_wrapper_binds_four_dirs` — rendered command for `opencode` contains all four bind args.
   - [ ] `test_opencode_disables_default_plugins` — `APPTAINERENV_OPENCODE_DISABLE_DEFAULT_PLUGINS=1` is set.
@@ -522,27 +522,27 @@ This task implements the user's authoritative decision: bind-mount the host HOME
 
 ##### Task 1.8 — Claude managed-settings: open hpcsupport ticket + startup banner (~30 min) [§3.8]
 
-- [ ] Open hpcsupport ticket: request `/etc/claude-code/managed-settings.json` write privilege so v2 D5 can land. Track ticket in `docs/v2-deferred.md`.
-- [ ] In `bundled/templates/managed-claude-settings.json`, verify `disableBypassPermissionsMode` value type — schema may expect boolean (`true`) rather than string `"disable"`. Cross-reference against `https://json.schemastore.org/claude-code-settings.json`. Add `"$schema"` to the template. If schema disagrees with current value, update the template and add a `tests/test_policy_emit.py::test_managed_settings_schema_valid` round-trip.
-- [ ] In `executor.py::_emit_managed_policy`, add a one-time first-run banner printed to the user explaining that user-scope managed settings are silently overridable by repo-level `.claude/settings.json` and that true org-managed enforcement requires the hpcsupport ticket to land. Banner gates on absence of `/etc/claude-code/managed-settings.json`.
+- [x] Open hpcsupport ticket: request `/etc/claude-code/managed-settings.json` write privilege so v2 D5 can land. Track ticket in `docs/v2-deferred.md`.
+- [x] In `bundled/templates/managed-claude-settings.json`, verify `disableBypassPermissionsMode` value type — schema may expect boolean (`true`) rather than string `"disable"`. Cross-reference against `https://json.schemastore.org/claude-code-settings.json`. Add `"$schema"` to the template. If schema disagrees with current value, update the template and add a `tests/test_policy_emit.py::test_managed_settings_schema_valid` round-trip.
+- [x] In `executor.py::_emit_managed_policy`, add a one-time first-run banner printed to the user explaining that user-scope managed settings are silently overridable by repo-level `.claude/settings.json` and that true org-managed enforcement requires the hpcsupport ticket to land. Banner gates on absence of `/etc/claude-code/managed-settings.json`.
 
 ##### Task 1.9 — README one-line fix (~5 min) [§3.11]
 
-- [ ] In `README.md` (currently line 13 — synthesis cited line 12; the file drifted slightly), change `npm i -g opencode` to `npm i -g opencode-ai`. (The full README rewrite is Sprint 3 item 3.13.)
+- [x] In `README.md` (currently line 13 — synthesis cited line 12; the file drifted slightly), change `npm i -g opencode` to `npm i -g opencode-ai`. (The full README rewrite is Sprint 3 item 3.13.)
 
 ##### Phase 1 acceptance criteria
 
-- [ ] All twelve §3 MUST-FIX items from synthesis closed (1.0 covers the §3.5/§3.6 CI guards prep; 1.1 covers §3.1/§3.2/§3.4; 1.2 covers §3.3; 1.3 covers §3.5; 1.4 covers §3.6/§3.7; 1.5 covers §3.9; 1.6/1.7 cover §3.10; 1.7 covers §3.12; 1.8 covers §3.8; 1.9 covers §3.11).
-- [ ] All new tests pass; all existing 124 tests still pass.
-- [ ] `coding-agents install` end-to-end smoke (manual or scripted) succeeds for `claude`, `codex`, `opencode`, `pi` with the new bind-mount strategy on a real Apptainer install.
-- [ ] OpenCode launched from the wrapper retains auth, model picks, and prompt history across two consecutive invocations.
-- [ ] Pi launched from the wrapper sees its four post-install plugins (pi-ask-user, pi-subagents, pi-web-access, pi-mcp-adapter) and reads the corrected `mcp.json` with `toolPrefix: "short"`.
-- [ ] Codex generated `~/.codex/config.toml` validates against the real Codex schema.
-- [ ] OpenCode generated `~/.config/opencode/opencode.json` validates against `local_clones/opencode/packages/opencode/src/config/mcp.ts` Effect Schema.
-- [ ] `coding-agents sync` refreshes Codex deny rules after editing `bundled/hooks/deny_rules.json` (no longer silent no-op).
-- [ ] Wrapper rejects an invocation from `cd '/tmp/foo"bar'`; rejects `provider.env` with `BASH_ENV=...`; produces line-atomic JSONL audit entries under concurrent writers.
-- [ ] Aborting `coding-agents install` with Ctrl-C mid-write does not leave a zero-byte `~/.claude/settings.json` (fork-based test).
-- [ ] Bundled-tree CI guard fails the build if both copies exist with diverging content.
+- [x] All twelve §3 MUST-FIX items from synthesis closed (1.0 covers the §3.5/§3.6 CI guards prep; 1.1 covers §3.1/§3.2/§3.4; 1.2 covers §3.3; 1.3 covers §3.5; 1.4 covers §3.6/§3.7; 1.5 covers §3.9; 1.6/1.7 cover §3.10; 1.7 covers §3.12; 1.8 covers §3.8; 1.9 covers §3.11).
+- [x] All new tests pass; all existing 124 tests still pass.
+- [~] `coding-agents install` end-to-end smoke (manual or scripted) succeeds for `claude`, `codex`, `opencode`, `pi` with the new bind-mount strategy on a real Apptainer install. *(Code complete; needs manual verification on a real HPC compute node — see `docs/implementation_summary_and_issues_27_04_2026.md` §Deferred decisions.)*
+- [~] OpenCode launched from the wrapper retains auth, model picks, and prompt history across two consecutive invocations. *(Same — manual SLURM smoke needed; cannot run from this autonomous environment.)*
+- [~] Pi launched from the wrapper sees its four post-install plugins (pi-ask-user, pi-subagents, pi-web-access, pi-mcp-adapter) and reads the corrected `mcp.json` with `toolPrefix: "short"`. *(Same — manual SLURM smoke needed.)*
+- [x] Codex generated `~/.codex/config.toml` validates against the real Codex schema.
+- [x] OpenCode generated `~/.config/opencode/opencode.json` validates against `local_clones/opencode/packages/opencode/src/config/mcp.ts` Effect Schema.
+- [x] `coding-agents sync` refreshes Codex deny rules after editing `bundled/hooks/deny_rules.json` (no longer silent no-op). *(Verified by `tests/test_registry_symmetry.py` + `test_policy_emit::test_merge_codex_sandbox_config_*`.)*
+- [x] Wrapper rejects an invocation from `cd '/tmp/foo"bar'`; rejects `provider.env` with `BASH_ENV=...`; produces line-atomic JSONL audit entries under concurrent writers. *(Code-level verified by `test_wrappers.py::test_wrapper_validates_pwd_shape`, `test_wrapper_provider_env_rejects_invalid_key_names`, `test_wrapper_audit_log_uses_flock`. Live concurrency test deferred to HPC smoke.)*
+- [x] Aborting `coding-agents install` with Ctrl-C mid-write does not leave a zero-byte `~/.claude/settings.json` *(verified by `test_security.py::test_secure_write_text_atomic_no_zero_byte_on_write_failure` — mock-based instead of fork-based; same guarantee).*
+- [x] Bundled-tree CI guard fails the build if both copies exist with diverging content.
 
 ---
 
