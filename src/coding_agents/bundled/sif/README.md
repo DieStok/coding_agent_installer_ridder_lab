@@ -1,7 +1,7 @@
 # Building `coding_agent_hpc.sif`
 
 Apptainer SIF for the four MVP coding agents (Claude Code, Codex CLI, OpenCode, Pi).
-Recipe: [`bundled/coding_agent_hpc.def`](../coding_agent_hpc.def).
+Recipe: [`coding_agent_hpc.def`](../coding_agent_hpc.def) (alongside this README in the canonical bundled tree at `src/coding_agents/bundled/`).
 The lab admin runs the build once, copies the SIF to the HPC share, and atomic-swaps `current.sif`.
 
 ---
@@ -10,9 +10,9 @@ The lab admin runs the build once, copies the SIF to the HPC share, and atomic-s
 
 - **Docker Desktop** running (whale icon in the menu bar shows "Docker Desktop is running").
 - **~10 GB free disk** in the Docker VM (Settings → Resources → Disk image size).
-- **`bundled/sif/package-lock.json`** committed in the repo. Regenerate only when bumping pinned agent versions:
+- **`src/coding_agents/bundled/sif/package-lock.json`** committed in the repo. Regenerate only when bumping pinned agent versions:
   ```bash
-  docker run --rm --platform linux/amd64 -v "$PWD/bundled/sif:/work" -w /work \
+  docker run --rm --platform linux/amd64 -v "$PWD/src/coding_agents/bundled/sif:/work" -w /work \
     node:20 npm install --package-lock-only --omit=dev
   ```
   *Generates a deterministic dependency tree so SIF rebuilds are reproducible.*
@@ -35,9 +35,9 @@ cd <repo-root>
 docker run --rm --privileged --platform linux/amd64 \
   -v "$PWD:/work" -w /work \
   ghcr.io/apptainer/apptainer:1.4.5 \
-  apptainer build coding_agent_hpc.sif bundled/coding_agent_hpc.def
+  apptainer build coding_agent_hpc.sif src/coding_agents/bundled/coding_agent_hpc.def
 ```
-*Reads `bundled/coding_agent_hpc.def`, executes `%post` (apt + Node 20 + gitleaks + `npm ci`), bakes versions, writes `coding_agent_hpc.sif` (~1.5–2 GB). 10–15 min on Apple Silicon, 5–8 min on Intel/Linux.*
+*Reads `src/coding_agents/bundled/coding_agent_hpc.def`, executes `%post` (apt + Node 20 + gitleaks + `npm ci`), bakes versions, writes `coding_agent_hpc.sif` (~1.5–2 GB). 10–15 min on Apple Silicon, 5–8 min on Intel/Linux.*
 
 ### 3. Verify labels (sub-second sanity check)
 ```bash

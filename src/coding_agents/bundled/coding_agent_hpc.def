@@ -18,8 +18,8 @@ From: ubuntu:24.04
     coding-agents.usage Run from `agent-<name>` wrapper inside `srun --pty`. See docs/v2-deferred.md for v2 scope.
 
 %files
-    bundled/sif/package.json /sif-build/package.json
-    bundled/sif/package-lock.json /sif-build/package-lock.json
+    src/coding_agents/bundled/sif/package.json /sif-build/package.json
+    src/coding_agents/bundled/sif/package-lock.json /sif-build/package-lock.json
 
 %post
     set -eux
