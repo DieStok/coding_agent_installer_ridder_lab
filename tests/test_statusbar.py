@@ -117,8 +117,12 @@ def test_install_claude_statusbar_calls_npm_install_with_pinned_version(tmp_path
         def write(self, *a, **kw):
             pass
 
+    # Force --local mode so the npm install actually runs (HPC mode now
+    # skips it because ccstatusline is baked into the SIF).
     asyncio.run(
-        executor._install_claude_statusbar(_FakeLog(), install_dir=tmp_path / "install")
+        executor._install_claude_statusbar(
+            _FakeLog(), install_dir=tmp_path / "install", mode="local"
+        )
     )
 
     npm_calls = [c for c in captured_calls if c[0] == "npm_install"]

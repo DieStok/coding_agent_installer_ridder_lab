@@ -43,7 +43,7 @@ def run_update() -> None:
 
         before = _get_version(agent)
         try:
-            _update_agent(key, agent, install_dir)
+            _update_agent(key, agent, install_dir, mode=config.get("mode", "hpc"))
         except Exception as exc:
             console.print(f"  [red]✗ {agent['display_name']}: {exc}[/red]")
             versions.append((agent["display_name"], before, f"ERROR: {exc}"))
@@ -141,9 +141,22 @@ def _get_version(agent: dict) -> str:
         return "unknown"
 
 
-def _update_agent(key: str, agent: dict, install_dir: Path) -> None:
-    """Update a single agent to latest."""
+def _update_agent(key: str, agent: dict, install_dir: Path, *, mode: str = "hpc") -> None:
+    """Update a single agent to latest.
+
+    HPC mode: all four agents (claude, codex, opencode, pi) live in the
+    SIF — host-side `npm install ...@latest` and `claude update` are
+    dead weight. Agents update by rebuilding the SIF on the lab admin
+    side, not by running this command. We log a no-op message and
+    return.
+
+    Local mode: same code paths as before the no-wrap-via-sif refactor.
+    """
     method = agent["method"]
+
+    if mode != "local":
+        # SIF carries every agent in HPC mode; nothing to update on the host.
+        return
 
     if method == "npm":
         npm_install(install_dir, f"{agent['package']}@latest")

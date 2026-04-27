@@ -89,9 +89,10 @@ def _gather_checks(
         checks.append((
             "Node.js >= 18",
             "pass",
-            "(host node not required for the wrapped flow — agents + "
-            "NO_WRAP=1 both run inside the SIF; only needed for `--local` "
-            "mode, claude curl install, or host tools like ccstatusline)",
+            "(host node not required for HPC mode — every agent (claude, "
+            "codex, opencode, pi) and host tool (biome, ccstatusline) is "
+            "baked into the SIF; only needed for `--local` mode where "
+            "there is no SIF to fall back on)",
         ))
     else:
         checks.append((

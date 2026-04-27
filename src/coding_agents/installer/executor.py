@@ -120,7 +120,7 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
         agent = AGENTS[agent_key]
         log.write(f"  Installing {agent['display_name']}…")
         try:
-            await _install_agent(agent_key, agent, install_dir, log)
+            await _install_agent(agent_key, agent, install_dir, log, mode=state.mode)
             log.write(f"  [green]✓[/green] {agent['display_name']}")
         except Exception as exc:
             log.write(f"  [red]✗ {agent['display_name']}: {exc}[/red]")
@@ -292,15 +292,23 @@ async def _merge_existing_settings(
                 log.write(f"  [green]✓[/green] Claude MCP: {r.summary()}")
 
 
-async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog) -> None:
+async def _install_agent(
+    key: str, agent: dict, install_dir: Path, log: RichLog, *, mode: str = "hpc"
+) -> None:
     """Install a single agent.
 
-    For npm-method agents (codex, opencode, pi) the host npm install is
-    skipped — the agent runs from the SIF (which has the binary baked in
-    via the SIF build), and the wrapper template at
+    HPC mode: all four wrappable agents run from the SIF — Codex, OpenCode,
+    Pi via the npm bake-in (bundled/sif/package.json), Claude Code via
+    the same bake-in (post-2026-04-27 — the curl install was dead weight
+    once Claude was already in the SIF). The wrapper at
     ``<install_dir>/bin/agent-<key>`` (created later in phase 8) routes
-    the wrapped flow through the SIF. The CODING_AGENTS_NO_WRAP=1 escape
-    hatch also goes via the SIF (see runtime/agent_vscode.exec_no_wrap).
+    the wrapped flow through the SIF for both npm and curl agents.
+    Phase 8 also creates a bare-name symlink ``<install_dir>/bin/<key>``
+    pointing at the wrapper, so typing `claude` in a terminal goes
+    through the same sandbox as `agent-claude`.
+
+    Local mode: host installs are still required (no SIF). Same code
+    paths as before the no-wrap refactor.
 
     Pi's ``post_install`` extension wiring (pi-ask-user et al.) is now
     handled by the SIF builder + the wrapper template's first-run hook
@@ -320,7 +328,26 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
         return
 
     elif method == "curl":
-        # Claude Code — install to default location, then symlink
+        # Claude Code is also baked into the SIF (bundled/sif/package.json).
+        # In HPC mode the curl install is dead weight — same logic as the
+        # npm-method agents above. Host install only matters for --local
+        # mode (no SIF). The bin/agent-claude wrapper + the bin/claude
+        # bare-name symlink (both created in phase 8) handle terminal
+        # invocations via the SIF.
+        if mode != "local":
+            log.write(
+                f"    [dim]agent runs from the SIF — skipping host curl install for {agent['display_name']}[/dim]"
+            )
+            # Still configure the ccstatusline statusLine entry in
+            # ~/.claude/settings.json — the in-SIF copy of ccstatusline
+            # at /opt/agents/node_modules/.bin/ccstatusline resolves it
+            # at agent runtime. The settings.json write is host-side
+            # bookkeeping and runs regardless of mode.
+            if key == "claude":
+                await _install_claude_statusbar(log, install_dir=install_dir, mode=mode)
+            return
+
+        # --local: host install + symlink, current behaviour.
         await _run_in_thread(
             run,
             ["bash", "-c", agent["install_cmd"]],
@@ -340,13 +367,15 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
 
         # Install and configure ccstatusline statusline
         if key == "claude":
-            await _install_claude_statusbar(log, install_dir=install_dir)
+            await _install_claude_statusbar(log, install_dir=install_dir, mode=mode)
 
 
 _CCSTATUSLINE_VERSION = "2.2.10"
 
 
-async def _install_claude_statusbar(log: RichLog, *, install_dir: Path) -> None:
+async def _install_claude_statusbar(
+    log: RichLog, *, install_dir: Path, mode: str = "hpc"
+) -> None:
     """Install ccstatusline + wire the statusLine entry in ~/.claude/settings.json.
 
     ccstatusline (https://github.com/sirmalloc/ccstatusline, ~3 MB, MIT) is a
@@ -355,31 +384,35 @@ async def _install_claude_statusbar(log: RichLog, *, install_dir: Path) -> None:
     the statusline to stdout and exits. When invoked interactively from a
     shell, the same `ccstatusline` binary opens a TUI for customisation.
 
-    Replaces the prior `claude-statusbar` (`cs --hide-pet`) flow, which had
-    a latent bug in HPC mode: `uv tool install claude-statusbar` installed
-    `cs` to the *host* (e.g. ~/.local/bin/cs), but Claude runs inside the
-    SIF, where `--no-mount home` makes the host PATH invisible — so the
-    statusLine.command was a silent no-op under SLURM. ccstatusline is
-    baked into the SIF (bundled/sif/package.json) so the in-SIF binary at
-    /opt/agents/node_modules/.bin/ccstatusline resolves cleanly.
+    HPC mode: ccstatusline is baked into the SIF
+    (bundled/sif/package.json) so the in-SIF binary at
+    /opt/agents/node_modules/.bin/ccstatusline resolves cleanly when
+    Claude calls it from inside the wrapped flow. The host npm install
+    is dead weight here and is skipped.
 
-    For local mode (and as a host-side fallback for HPC users on a stale
-    SIF that hasn't been rebuilt with ccstatusline yet), we additionally
-    npm-install ccstatusline into <install_dir>/node_modules so the
-    install_dir's node_modules/.bin/ — already on PATH via the shell-rc
-    injection — resolves bare `ccstatusline` too.
+    Local mode: no SIF, so we npm-install ccstatusline into
+    <install_dir>/node_modules. That dir's node_modules/.bin is already
+    on PATH via the shell-rc injection, so bare `ccstatusline` resolves
+    when Claude calls it on the host.
+
+    The settings.json write happens in both modes — Claude needs to know
+    to call ccstatusline regardless of where the binary lives.
     """
-    log.write(f"    Installing ccstatusline@{_CCSTATUSLINE_VERSION}...")
-    try:
-        await _run_in_thread(npm_install, install_dir, f"ccstatusline@{_CCSTATUSLINE_VERSION}")
-        log.write(f"    [green]✓[/green] ccstatusline@{_CCSTATUSLINE_VERSION} installed under {install_dir}/node_modules")
-    except (subprocess.CalledProcessError, OSError, FileNotFoundError) as exc:
-        # Non-fatal: in HPC mode the in-SIF copy still works. Just warn.
+    if mode == "local":
+        log.write(f"    Installing ccstatusline@{_CCSTATUSLINE_VERSION}...")
+        try:
+            await _run_in_thread(npm_install, install_dir, f"ccstatusline@{_CCSTATUSLINE_VERSION}")
+            log.write(f"    [green]✓[/green] ccstatusline@{_CCSTATUSLINE_VERSION} installed under {install_dir}/node_modules")
+        except (subprocess.CalledProcessError, OSError, FileNotFoundError) as exc:
+            log.write(
+                f"    [yellow]npm install ccstatusline failed ({exc}); "
+                f"statusline still configured but ccstatusline must be on "
+                f"PATH manually for local mode.[/yellow]"
+            )
+    else:
         log.write(
-            f"    [yellow]npm install ccstatusline failed ({exc}); "
-            f"statusline still configured (HPC mode falls back to the in-SIF copy at "
-            f"/opt/agents/node_modules/.bin/ccstatusline; local mode users will need "
-            f"the package on PATH manually).[/yellow]"
+            "    [dim]ccstatusline runs from the SIF in HPC mode — "
+            "skipping host npm install[/dim]"
         )
 
     settings_path = Path.home() / ".claude" / "settings.json"
@@ -875,6 +908,21 @@ async def _create_sandbox_wrappers(state, install_dir: Path, log: RichLog) -> No
     Renders bundled/templates/wrapper/agent.template.sh per agent. The
     template's variable list is pinned in sandbox_wrappers.WRAPPER_VARS;
     drift between the template and the renderer is detected by tests.
+
+    Also creates a bare-name symlink ``<install_dir>/bin/<key>`` →
+    ``<install_dir>/bin/agent-<key>`` for each wrappable agent. This
+    way typing `claude` / `codex` / `pi` (and `opencode` if the
+    path-shim doesn't shadow it) in a terminal goes through the same
+    wrapped flow as `agent-<key>`. Without this symlink, a user typing
+    bare `claude` either gets "command not found" (no host install
+    after the no-wrap-via-sif refactor) or — worse — finds a
+    differently-installed claude on PATH that bypasses sandboxing.
+
+    For OpenCode the bare-name symlink is shadowed by the
+    bin/path-shim/opencode entry from the shell-rc PATH-prefix block
+    (the path-shim is prepended after bin/ on PATH). The symlink is
+    created anyway for consistency and as a fallback if the user
+    removes the path-shim.
     """
     from coding_agents.installer.sandbox_wrappers import (
         load_template,
@@ -899,6 +947,16 @@ async def _create_sandbox_wrappers(state, install_dir: Path, log: RichLog) -> No
         )
         dry_run_write_text(wrapper_path, script, mode=0o755)
         log.write(f"  [green]✓[/green] {wrapper_name}")
+
+        # Bare-name symlink (post-2026-04-27): so `claude` resolves to
+        # the same wrapper as `agent-claude`. Use a relative target so
+        # the symlink survives an install_dir rename.
+        bare_link = bin_dir / agent_key
+        if not is_dry_run():
+            if bare_link.is_symlink() or bare_link.exists():
+                bare_link.unlink()
+            os.symlink(wrapper_name, bare_link)
+        log.write(f"  [green]✓[/green] {agent_key} → {wrapper_name}")
 
 
 async def _bootstrap_user_dirs(state, log: RichLog) -> None:
