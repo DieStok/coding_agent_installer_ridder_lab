@@ -93,17 +93,27 @@ def build_next_steps(state: InstallerState) -> list[Step]:
                 ext_links=tuple((k, ext) for k, ext in ext_pairs),
             ))
 
-    # 5. VSCode wrapper-hooks paste-block (only if Settings Sync hides the file).
+    # 5. VSCode wrapper-hooks paste-block when sync can't find the file.
     if wrappable:
         steps.append(Step(
-            title="Wire the VSCode wrapper hooks (Settings Sync users)",
+            title="Wire the VSCode wrapper hooks (custom serverInstallPath / Settings Sync)",
             body=(
-                "If `coding-agents sync` printed a JSONC block under "
-                "'VSCode wrapper hooks' (Settings Sync users — settings.json "
-                "lives in cloud sync, not on this host), open the Command "
-                "Palette and paste it into your user settings. After saving, "
-                "the four sidebars route through the SIF wrapper.\n"
-                "  Command Palette → 'Preferences: Open User Settings (JSON)'"
+                "If `coding-agents sync` printed a JSONC block instead of "
+                "'re-emitted to ...', it couldn't find your settings.json on "
+                "this host. Two reasons this happens:\n"
+                "  • Custom remote.SSH.serverInstallPath — re-run sync with "
+                "the explicit path:\n"
+                "      coding-agents sync --vscode-settings "
+                "<server-root>/data/Machine/settings.json\n"
+                "  • VSCode Settings Sync — machine-scoped wrapper keys "
+                "(chatgpt.cliExecutable, pi-vscode.path, "
+                "terminal.integrated.env.linux) are deliberately NOT cloud-"
+                "synced per the VSCode docs, so they have to live in the "
+                "Remote-side Machine settings. Connect VSCode to this host "
+                "via Remote-SSH, then in Command Palette pick "
+                "'Preferences: Open Remote Settings (JSON)' (NOT 'User "
+                "Settings') and paste the block printed by sync at the top "
+                "level of that JSON object."
             ),
             action=None,
         ))
