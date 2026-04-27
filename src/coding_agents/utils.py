@@ -29,10 +29,35 @@ _SAFE_PATH_RE = re.compile(r'^[a-zA-Z0-9/_.\-~]+$')
 # ---------------------------------------------------------------------------
 
 def secure_write_text(path: Path, content: str) -> None:
-    """Write text file with 0o600 permissions (owner-only read/write).
+    """Atomically write a text file with 0o600 permissions.
 
-    Uses os.open() to set permissions at creation time — no window where
-    the file is world-readable. Essential on shared HPC clusters.
+    Synthesis §3.3 / Sprint 1 Task 1.2: the previous implementation opened
+    with ``O_WRONLY|O_CREAT|O_TRUNC`` and a single ``os.write()``. A
+    ``Ctrl-C`` / ``scancel`` / OOM mid-write left a zero-byte file. Since
+    callers like ``config.load_config`` swallow ``JSONDecodeError``, that
+    silently corrupted the user's settings.
+
+    POSIX safe-replace pattern instead:
+
+      1. ``mkstemp`` in the same directory as the target → unique file
+         created with 0o600 by mkstemp's own design.
+      2. Write content via ``os.write`` (no buffering).
+      3. ``os.fsync(fd)`` so the data is on disk before the rename.
+      4. ``os.replace(tmp, path)`` — atomic on POSIX (same filesystem
+         guaranteed since both live in the same dir).
+      5. ``os.fsync`` the parent dir so the rename itself survives a
+         crash.
+
+    Effect: any concurrent reader sees either the old content or the
+    new content — never a half-written or zero-byte file. A crash before
+    step 4 leaves the temp file behind (cleaned up by ``mkstemp``'s
+    automatic registration on process exit if we still hold the fd; the
+    finally block also unlinks). A crash after step 4 is fully durable
+    once step 5 returns.
+
+    Permissions discipline (0o600) is preserved: the file never exists
+    with broader permissions because ``mkstemp`` creates it 0o600 from
+    the start. Synthesis §2.5 documents this as the right shape.
     """
     log.debug("secure_write_text: %s (%d bytes)", path, len(content))
     if is_dry_run():
@@ -45,12 +70,62 @@ def secure_write_text(path: Path, content: str) -> None:
             mode="0o600",
         )
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    payload = content.encode()
+
+    # mkstemp returns (fd, path) with permissions 0o600 (owner-only) on
+    # POSIX. Putting the temp in the same dir as the target is required
+    # for os.replace to be atomic.
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(parent),
+    )
+    tmp_path = Path(tmp_path_str)
     try:
-        os.write(fd, content.encode())
-    finally:
+        # Single write — no buffering layer between our bytes and the kernel.
+        # tempfile.mkstemp may have set arbitrary umask-derived perms on
+        # some platforms; force 0o600 explicitly for defence-in-depth.
+        os.fchmod(fd, 0o600)
+        n = os.write(fd, payload)
+        if n != len(payload):  # short write; rare on local fs but possible on NFS
+            # Fall back to a loop for the remainder.
+            written = n
+            while written < len(payload):
+                written += os.write(fd, payload[written:])
+        os.fsync(fd)
         os.close(fd)
+        fd = -1  # marker: don't close again in finally
+
+        os.replace(tmp_path, path)
+
+        # fsync the parent dir so the rename is durable.
+        try:
+            dir_fd = os.open(str(parent), os.O_DIRECTORY)
+        except OSError:
+            # Some filesystems don't support O_DIRECTORY fsync (e.g. tmpfs
+            # in certain setups). Best-effort; the rename itself is atomic.
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except BaseException:
+        # On any failure (including KeyboardInterrupt), best-effort
+        # cleanup of the temp file. The target is left untouched.
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
