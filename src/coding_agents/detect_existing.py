@@ -170,7 +170,13 @@ def backup_agent_dir(inv: AgentInventory) -> Path | None:
         return backup_path
 
     try:
-        with tarfile.open(str(backup_path), "w:gz") as tar:
+        # compresslevel=6 is gzip's "balanced" preset; level 9 (Python's
+        # default) costs roughly 2-3x the CPU for ~1-2% smaller output on
+        # text-heavy archives like Claude's session transcripts. Level 6
+        # is plenty for a recovery snapshot.
+        with tarfile.open(
+            str(backup_path), "w:gz", compresslevel=6
+        ) as tar:
             tar.add(
                 str(inv.config_dir),
                 arcname=inv.config_dir.name,

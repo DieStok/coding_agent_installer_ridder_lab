@@ -199,7 +199,14 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
 
 
 async def _backup_existing(agents: list[str], log: RichLog) -> None:
-    """Back up existing agent config directories to .tar.gz."""
+    """Back up existing agent config directories to .tar.gz, in parallel.
+
+    Each agent's tarball runs in its own thread (gzip releases the GIL on
+    the deflate hot path; tar reads from NFS release the GIL too), so on
+    a multi-core box `.claude` and `.codex` finish in roughly the time
+    of the slower one rather than the sum. See backup_agent_dir for the
+    compresslevel choice.
+    """
     _log.debug("backup_existing: scanning for agents=%s", agents)
     from coding_agents.detect_existing import scan_existing, backup_agent_dir
 
@@ -208,18 +215,28 @@ async def _backup_existing(agents: list[str], log: RichLog) -> None:
         log.write("  [dim]No existing installations found[/dim]")
         return
 
-    for inv in inventory.existing_agents:
-        if inv.agent_key in agents:
+    targets = [inv for inv in inventory.existing_agents if inv.agent_key in agents]
+    if not targets:
+        log.write("  [dim]No existing installations match selected agents[/dim]")
+        return
+
+    for inv in targets:
+        log.write(
+            f"  {inv.display_name}: {inv.file_count} files "
+            f"({inv.human_size()}) in {inv.config_dir}"
+        )
+        log.write(f"    Files:\n{inv.tree_display(max_files=10)}")
+
+    results = await asyncio.gather(
+        *(_run_in_thread(backup_agent_dir, inv) for inv in targets)
+    )
+    for inv, backup_path in zip(targets, results):
+        if backup_path:
             log.write(
-                f"  {inv.display_name}: {inv.file_count} files "
-                f"({inv.human_size()}) in {inv.config_dir}"
+                f"  [green]✓[/green] {inv.display_name}: backed up to {backup_path}"
             )
-            log.write(f"    Files:\n{inv.tree_display(max_files=10)}")
-            backup_path = await _run_in_thread(backup_agent_dir, inv)
-            if backup_path:
-                log.write(f"    [green]✓[/green] Backed up to {backup_path}")
-            else:
-                log.write(f"    [dim]No backup needed[/dim]")
+        else:
+            log.write(f"  [dim]{inv.display_name}: no backup needed[/dim]")
 
 
 async def _merge_existing_settings(

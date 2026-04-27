@@ -90,6 +90,45 @@ def test_backup_agent_dir():
             assert any("CLAUDE.md" in n for n in names)
 
 
+def test_backup_uses_gzip_level_below_max():
+    """Regression: tarfile.open(\"w:gz\") defaults to compresslevel=9 which
+    is 2-3x slower than level 6 for ~1-2% smaller output. Recovery
+    snapshots don't need maximum compression — keep the default below 9.
+
+    We can't directly read the level back from the gzip stream, but we
+    can write a known-large repeating payload and assert the resulting
+    tarball is at least slightly larger than what level 9 would produce
+    on the same input — proving we're not on level 9. (We compare against
+    a level-9 tarball produced inline.)"""
+    import tarfile as _tf
+    from coding_agents.detect_existing import AgentInventory, backup_agent_dir
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_dir = Path(tmpdir) / ".claude"
+        config_dir.mkdir()
+        # Repeating but not-trivially-compressible payload so level 9
+        # actually beats level 6 by a measurable amount.
+        payload = ("the quick brown fox jumps over the lazy dog\n" * 5000)
+        (config_dir / "transcript.jsonl").write_text(payload)
+
+        inv = AgentInventory("claude", "Claude Code", config_dir, exists=True)
+        actual = backup_agent_dir(inv)
+        assert actual is not None
+
+        # Reference: same payload at level 9.
+        ref = Path(tmpdir) / "ref.tar.gz"
+        with _tf.open(str(ref), "w:gz", compresslevel=9) as tar:
+            tar.add(str(config_dir), arcname=config_dir.name)
+
+        actual_size = actual.stat().st_size
+        ref_size = ref.stat().st_size
+        assert actual_size > ref_size, (
+            f"backup at {actual_size} bytes is no larger than the "
+            f"level-9 reference at {ref_size} — backup may still be on "
+            f"level 9, which is 2-3x slower than necessary"
+        )
+
+
 def test_backup_skips_nonexistent():
     from coding_agents.detect_existing import AgentInventory, backup_agent_dir
 
