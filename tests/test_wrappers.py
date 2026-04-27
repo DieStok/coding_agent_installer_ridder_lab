@@ -155,3 +155,151 @@ def test_wrapper_does_not_carry_cut_extra_bind_env_hatches():
     text = load_template()
     assert "AGENT_EXTRA_BIND" not in text
     assert "AGENT_EXTRA_ENV" not in text
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1 Task 1.1 — wrapper security trio (synthesis §3.1, §3.2, §3.4)
+# ---------------------------------------------------------------------------
+
+
+def test_wrapper_validates_pwd_shape():
+    """Synthesis §3.1: refuse cwd containing `"`, control chars, or
+    newlines — these are audit-log-forgery vectors."""
+    text = load_template()
+    # The check is a case-pattern. Verify the patterns are present.
+    assert '*[[:cntrl:]]*' in text
+    assert '*\\"*' in text
+    assert "exit 6" in text
+
+
+def test_wrapper_requires_jq_on_host():
+    """Synthesis §3.1: the audit-log JSON build relies on jq's --arg
+    escaping. The previous fallback was unsafe; jq is now a hard
+    requirement on the host."""
+    text = load_template()
+    assert "command -v jq" in text
+    assert "exit 10" in text
+    # No more printf-only fallback for argv encoding
+    assert "<argv-elided: jq not in host PATH>" not in text
+
+
+def test_wrapper_audit_log_uses_jq_n_for_safe_encoding():
+    """Synthesis §3.1: the JSONL line is built entirely through jq -n
+    --arg / --argjson, not printf interpolation."""
+    text = load_template()
+    # Old unsafe printf pattern is gone
+    assert (
+        'printf \'{"ts":"%s","agent":"%s","cwd":"%s"' not in text
+    ), "audit log still uses printf interpolation (synthesis §3.1)"
+    # New safe path is present
+    assert "jq -nc" in text or "jq -n " in text
+    assert '--arg ts' in text
+    assert '--argjson argv' in text
+
+
+def test_wrapper_audit_log_uses_flock():
+    """Synthesis §3.4: line-atomic JSONL append via flock. POSIX O_APPEND
+    atomicity only holds for ≤PIPE_BUF (4 KB); Codex prompt-as-argv
+    flows trivially exceed that."""
+    text = load_template()
+    assert "flock 9" in text
+    # The fd-9 redirection pattern
+    assert "9>>" in text
+
+
+def test_wrapper_provider_env_rejects_invalid_key_names():
+    """Synthesis §3.2: provider.env keys must match a strict regex AND
+    not be a poisonous-name. Both helpers must be defined and used."""
+    text = load_template()
+    assert "_is_valid_env_name" in text
+    assert "_is_poisonous_env_name" in text
+    # Defence rules
+    assert "^[A-Z][A-Z0-9_]{0,63}$" in text
+    # Spot-check the poisonous-name pattern includes the high-impact
+    # injection vectors
+    for poison in ("BASH_ENV", "PROMPT_COMMAND", "LD_*", "PYTHON*", "NODE_*"):
+        assert poison in text, f"poisonous-name blocklist missing {poison}"
+
+
+def test_wrapper_provider_env_allowlist_applied_to_keyfile_glob_too():
+    """Synthesis §3.2 cross-ref: same allowlist applies to filename-derived
+    names from the *_api_key / *_token / *_endpoint glob (not just to
+    provider.env). Otherwise an attacker who can drop a file named
+    `bash_env` (lowercase) into the secrets dir gets BASH_ENV exported."""
+    text = load_template()
+    # The keyfile loop must call _is_valid_env_name and
+    # _is_poisonous_env_name on var_name before exporting.
+    keyfile_section = text[text.index("for keyfile in"):]
+    keyfile_section = keyfile_section[: keyfile_section.index("if [ -r \"$AGENT_SECRETS_DIR/provider.env\"")]
+    assert "_is_valid_env_name" in keyfile_section
+    assert "_is_poisonous_env_name" in keyfile_section
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1 Task 1.7 — Pi + OpenCode HOME bind-mount (user decision 2026-04-27)
+# ---------------------------------------------------------------------------
+
+
+def test_wrapper_binds_pi_agent_home():
+    """Synthesis §3.10 + Sprint 1 Task 1.7: pi case binds host
+    ~/.pi/agent into the container at the same path."""
+    text = load_template()
+    pi_block = text[text.index("case \"$AGENT_NAME\""):]
+    pi_block = pi_block[: pi_block.index("esac")]
+    assert "pi)" in pi_block
+    assert '--bind "$HOME/.pi/agent:$HOME/.pi/agent"' in pi_block
+
+
+def test_wrapper_binds_four_opencode_dirs():
+    """Synthesis §3.12: OpenCode persists state in four HOME subdirs;
+    all must be bound writable."""
+    text = load_template()
+    for sub in (".config/opencode", ".local/share/opencode", ".cache/opencode", ".local/state/opencode"):
+        assert sub in text, f"OpenCode bind missing for {sub}"
+    # The OPENCODE_DISABLE_DEFAULT_PLUGINS=1 default
+    assert "APPTAINERENV_OPENCODE_DISABLE_DEFAULT_PLUGINS=1" in text
+
+
+def test_wrapper_passes_apptainerenv_home_for_bind_compat():
+    """The bind-mount path uses $HOME on the host; the in-container HOME
+    must match so ~/.pi/agent and ~/.config/opencode/ resolve to the
+    bound paths inside the SIF."""
+    text = load_template()
+    assert 'APPTAINERENV_HOME="$HOME"' in text
+
+
+def test_wrapper_opencode_passthrough_allowlist():
+    """Synthesis §3.12 bonus: OPENCODE_* env vars get passed through, but
+    every name still goes through the security regex + poisonous-name
+    blocklist (no env-var smuggling)."""
+    text = load_template()
+    for var in ("OPENCODE_CONFIG", "OPENCODE_PERMISSION", "OPENCODE_DISABLE_LSP_DOWNLOAD"):
+        assert var in text, f"OpenCode passthrough missing {var}"
+    # The passthrough loop validates each name before exporting.
+    oc_block_start = text.index("OPENCODE_CONFIG OPENCODE_CONFIG_DIR")
+    oc_block_end = text.index("# --- Audit log append")
+    oc_block = text[oc_block_start:oc_block_end]
+    assert "_is_valid_env_name" in oc_block
+    assert "_is_poisonous_env_name" in oc_block
+
+
+def test_wrapper_exec_includes_agent_home_binds():
+    """The new AGENT_HOME_BINDS array must be wired into the exec call,
+    or the bind-mount block has no effect."""
+    text = load_template()
+    # Find the exec block
+    exec_start = text.index("exec apptainer exec")
+    exec_block = text[exec_start:]
+    assert '"${AGENT_HOME_BINDS[@]}"' in exec_block
+
+
+def test_wrapper_exit_codes_cover_new_failures():
+    """Sprint 1 Task 1.1/1.7 introduced new exit codes:
+    6 ($PWD shape), 10 (jq missing), 11 (HOME bind setup failed)."""
+    text = load_template()
+    for code, reason in (
+        (6, "$PWD shape"),
+        (10, "jq missing"),
+        (11, "HOME bind"),
+    ):
+        assert f"exit {code}" in text, f"missing exit {code} ({reason})"

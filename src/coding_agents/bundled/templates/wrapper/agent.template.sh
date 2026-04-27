@@ -44,6 +44,32 @@ if [ ! -w "$PWD" ]; then
   exit 7
 fi
 
+# --- Precondition: $PWD is shape-safe (security §3.1) ---
+# Synthesis §3.1 / Sprint 1 Task 1.1: a hostile cwd path containing `"`,
+# control characters, or newlines can forge audit-log entries via
+# printf interpolation. Refuse the invocation up-front. Common cwds are
+# all-printable POSIX paths; rejecting these characters is no false-
+# positive risk. Multi-tenant users will hit oddly-named cwds eventually.
+case "$PWD" in
+  *[[:cntrl:]]*|*\"*|*$'\n'*|*$'\r'*)
+    echo "agent-${AGENT_NAME}: refusing to run from a cwd containing control characters, double-quote, or newlines: $PWD" >&2
+    echo "  This is almost always either a typo or an attack on the audit log. Move to a sane cwd and retry." >&2
+    exit 6
+    ;;
+esac
+
+# --- Precondition: jq is on host PATH (security §3.1) ---
+# The audit-log JSONL build below relies on jq's escape semantics for
+# every interpolated value (cwd, slurm job id, sif sha, argv). The
+# previous fallback that hand-rolled JSON via printf is unsafe, so jq
+# is now a hard requirement on the host. (jq is already present in the
+# SIF for in-sandbox use.)
+if ! command -v jq >/dev/null 2>&1; then
+  echo "agent-${AGENT_NAME}: jq not in host PATH — required for safe audit-log JSON encoding." >&2
+  echo "  Install jq (most clusters have it as a module: `module load jq`) and retry." >&2
+  exit 10
+fi
+
 # --- Precondition: $TMPDIR (SLURM tmpspace expected) ---
 if [ -z "${TMPDIR:-}" ] || [ ! -d "$TMPDIR" ]; then
   echo "agent-${AGENT_NAME}: \$TMPDIR is unset or missing — request --gres=tmpspace:5G in your srun." >&2
@@ -149,6 +175,38 @@ fi
 #       AZURE_OPENAI_RESOURCE_NAME=mycompany-openai
 #       GOOGLE_CLOUD_PROJECT=my-project-123
 #       GOOGLE_CLOUD_LOCATION=us-central1
+# Synthesis §3.2 / Sprint 1 Task 1.1: the previous parser stripped
+# whitespace from key, accepted any KEY=VALUE, and exported it as
+# APPTAINERENV_${KEY}. Apptainer's --containall filters the host LD_*
+# / SINGULARITY_* family but does NOT filter PATH, PYTHONPATH,
+# PYTHONSTARTUP, NODE_OPTIONS, BASH_ENV, PROMPT_COMMAND. A hostile
+# provider.env could land arbitrary code execution inside the sandbox
+# at agent startup, before any deny-rule hook fires.
+#
+# Defence: every KEY must (a) match the conservative regex
+# ^[A-Z][A-Z0-9_]{0,63}$, AND (b) NOT match the poisonous-name pattern
+# below. Same rules apply to filename-derived names from the *_api_key
+# glob.
+_is_poisonous_env_name() {
+  case "$1" in
+    PATH|HOME|USER|IFS|ENV|BASH_ENV|PS1|PS2|PS4|PROMPT_COMMAND)
+      return 0 ;;
+    LD_*|LIBPATH|PYTHON*|NODE_*|RUBY*|PERL*|JAVA_*)
+      return 0 ;;
+    APPTAINERENV_*|SINGULARITY_*|SINGULARITYENV_*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+_is_valid_env_name() {
+  case "$1" in
+    [A-Z]) return 0 ;;  # single uppercase letter
+  esac
+  # ^[A-Z][A-Z0-9_]{0,63}$
+  [[ "$1" =~ ^[A-Z][A-Z0-9_]{0,63}$ ]]
+}
+
 if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
   shopt -s nullglob
   for keyfile in \
@@ -162,6 +220,10 @@ if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
     [ -r "$keyfile" ] || continue
     name=$(basename "$keyfile")
     var_name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
+    if ! _is_valid_env_name "$var_name" || _is_poisonous_env_name "$var_name"; then
+      echo "agent-${AGENT_NAME}: refusing env passthrough for filename '$name' → '$var_name' (poisonous or malformed); skipping." >&2
+      continue
+    fi
     value=$(<"$keyfile")
     # Strip trailing newline so string-equality checks aren't tripped up.
     export "APPTAINERENV_${var_name}=${value%$'\n'}"
@@ -174,6 +236,10 @@ if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
       key="${key%"${key##*[![:space:]]}"}"   # trim trailing whitespace
       [ -z "$key" ] && continue
       case "$key" in \#*) continue ;; esac
+      if ! _is_valid_env_name "$key" || _is_poisonous_env_name "$key"; then
+        echo "agent-${AGENT_NAME}: refusing provider.env entry '$key' (must match ^[A-Z][A-Z0-9_]{0,63}\$ and not be a poisonous name); skipping." >&2
+        continue
+      fi
       val="${val%$'\n'}"
       val="${val#\"}"; val="${val%\"}"       # strip surrounding "
       val="${val#\'}"; val="${val%\'}"       # strip surrounding '
@@ -200,16 +266,111 @@ if [ -n "${AGENT_SECRETS_DIR:-}" ] && [ -d "$AGENT_SECRETS_DIR" ]; then
   SECRETS_BINDS=( --bind "$AGENT_SECRETS_DIR:/run/agent/secrets:ro" )
 fi
 
-# --- Audit log append (best effort; sha256 read from sidecar cached at install) ---
+# --- Per-agent HOME bind-mounts (synthesis §3.10/§3.12; user decision 2026-04-27) ---
+# Pi and OpenCode both persist substantial state under $HOME (auth.json,
+# session DBs, snapshots, LSP caches, prompt history). The base wrapper
+# uses --no-mount home,tmp so the host HOME is invisible inside the SIF.
+# Without a bind-mount Pi runs in "minimal" mode (no MCP, no plugins,
+# no auth) and OpenCode loses auth/sessions/DB on every invocation.
+#
+# Strategy: bind only the specific subdirs each agent needs, writable.
+# The rest of $HOME stays isolated (defence-in-depth: deny rules cover
+# ~/.ssh, ~/.aws, etc., and the cwd-bind keeps the agent away from
+# anything not explicitly bound).
+#
+# Inside the SIF, $HOME is normally /home/agentuser/. We pass
+# APPTAINERENV_HOME so the in-container HOME matches the host path —
+# that way `~/.pi/agent` inside the SIF resolves to the same location
+# the user already uses on the host. If $HOME is missing pieces (just
+# the bound subdir is present), Apptainer's tmpfs overlay creates
+# empty parent dirs as needed.
+AGENT_HOME_BINDS=()
+case "$AGENT_NAME" in
+  pi)
+    mkdir -p "$HOME/.pi/agent"
+    if [ -d "$HOME/.pi/agent" ]; then
+      AGENT_HOME_BINDS+=( --bind "$HOME/.pi/agent:$HOME/.pi/agent" )
+      export APPTAINERENV_HOME="$HOME"
+    else
+      echo "agent-${AGENT_NAME}: failed to create ~/.pi/agent for bind-mount." >&2
+      exit 11
+    fi
+    ;;
+  opencode)
+    OC_OK=true
+    for sub in .config/opencode .local/share/opencode .cache/opencode .local/state/opencode; do
+      mkdir -p "$HOME/$sub"
+      if [ -d "$HOME/$sub" ]; then
+        AGENT_HOME_BINDS+=( --bind "$HOME/$sub:$HOME/$sub" )
+      else
+        OC_OK=false
+        echo "agent-${AGENT_NAME}: failed to create ~/$sub for bind-mount." >&2
+      fi
+    done
+    if ! $OC_OK; then
+      exit 11
+    fi
+    export APPTAINERENV_HOME="$HOME"
+    # OpenCode ships with default plugins; in HPC mode we let the
+    # user/lab inject their own via OPENCODE_CONFIG. Disabling the
+    # defaults avoids surprise auto-fetches during SLURM jobs.
+    export APPTAINERENV_OPENCODE_DISABLE_DEFAULT_PLUGINS=1
+    ;;
+esac
+
+# --- OPENCODE_* env-var passthrough (synthesis §3.12 bonus, opencode §3 URGENT 6) ---
+# OpenCode reads a stack of OPENCODE_* environment variables for config,
+# permissions, model picks, LSP toggles, etc. None were in the wrapper's
+# allowlist; passing them through gives users a way to override SIF-side
+# behaviour at invocation time without editing config files. Same
+# poisoning-resistance regex applies to keys we forward.
+if [ "$AGENT_NAME" = "opencode" ]; then
+  for oc_var in \
+      OPENCODE_CONFIG OPENCODE_CONFIG_DIR OPENCODE_CONFIG_CONTENT \
+      OPENCODE_PERMISSION OPENCODE_DISABLE_PROJECT_CONFIG \
+      OPENCODE_MODELS_URL OPENCODE_DISABLE_LSP_DOWNLOAD \
+      OPENCODE_DB OPENCODE_TEST_HOME OPENCODE_AUTH_CONTENT; do
+    if [ -n "${!oc_var:-}" ]; then
+      # _is_valid_env_name and _is_poisonous_env_name are defined above.
+      if _is_valid_env_name "$oc_var" && ! _is_poisonous_env_name "$oc_var"; then
+        export "APPTAINERENV_${oc_var}=${!oc_var}"
+      fi
+    fi
+  done
+fi
+
+# --- Audit log append (security §3.1 + §3.4) ---
+# Synthesis §3.1: every interpolated value goes through jq's `--arg` /
+# `--argjson` so escaping is uniform. The previous printf-based path
+# was forgeable via $PWD containing `"` (now refused at the §3.1
+# precondition above, but we belt-and-braces here too).
+#
+# Synthesis §3.4: line-atomic via flock(1). POSIX guarantees O_APPEND
+# atomicity only for buffers ≤ PIPE_BUF (4 KB on Linux). Codex
+# prompt-as-argv flows trivially exceed 4 KB; two concurrent agents
+# in the same allocation could interleave bytes mid-line, producing
+# unparseable JSONL. flock makes the append serialised at file scope.
 if [ -n "${AGENT_LOGS_DIR:-}" ] && [ -w "$AGENT_LOGS_DIR" ]; then
   TODAY=$(date -u +%Y-%m-%d)
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   SIF_SHA=$(<"${SIF_RESOLVED}.sha256" 2>/dev/null || echo unknown)
-  ARGV_JSON=$(printf '%s\n' "$@" | jq -Rs 'split("\n") | map(select(length>0))' 2>/dev/null \
-              || printf '"<argv-elided: jq not in host PATH>"')
-  printf '{"ts":"%s","agent":"%s","cwd":"%s","slurm_job_id":"%s","sif_sha":"%s","argv":%s}\n' \
-    "$TS" "$AGENT_NAME" "$PWD" "$SLURM_JOB_ID" "$SIF_SHA" "$ARGV_JSON" \
-    >> "$AGENT_LOGS_DIR/${AGENT_NAME}-${TODAY}.jsonl" 2>/dev/null \
+  # Encode argv as a JSON array via jq --args so each element is
+  # individually escaped; no risk of newlines or control characters
+  # corrupting the line.
+  ARGV_JSON=$(jq -nc --args '$ARGS.positional' -- "$@")
+  AUDIT_LINE=$(jq -nc \
+    --arg ts        "$TS" \
+    --arg agent     "$AGENT_NAME" \
+    --arg cwd       "$PWD" \
+    --arg slurm_job_id "$SLURM_JOB_ID" \
+    --arg sif_sha   "$SIF_SHA" \
+    --argjson argv  "$ARGV_JSON" \
+    '{ts: $ts, agent: $agent, cwd: $cwd, slurm_job_id: $slurm_job_id, sif_sha: $sif_sha, argv: $argv}')
+  AUDIT_FILE="$AGENT_LOGS_DIR/${AGENT_NAME}-${TODAY}.jsonl"
+  # flock the file descriptor used for the append so concurrent writers
+  # serialise. fd 9 is opened on the audit file, the subshell holds the
+  # lock for the duration of the printf, then releases it at exit.
+  ( flock 9; printf '%s\n' "$AUDIT_LINE" >&9 ) 9>>"$AUDIT_FILE" \
     || echo "agent-${AGENT_NAME}: warning: failed to append audit log to $AGENT_LOGS_DIR" >&2
 fi
 
@@ -224,5 +385,6 @@ exec apptainer exec \
   "${ENV_BINDS[@]}" \
   "${SECRETS_BINDS[@]}" \
   "${CREDS_BINDS[@]}" \
+  "${AGENT_HOME_BINDS[@]}" \
   "$SIF_RESOLVED" \
   "$AGENT_BINARY" "$@"
