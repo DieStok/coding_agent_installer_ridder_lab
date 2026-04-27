@@ -358,12 +358,10 @@ def test_wrapper_passes_home_via_env_flag_not_apptainerenv():
     apptainer exec line, which is supported on 1.4+.
     """
     text = load_template()
-    # Drop full-line comments so historical notes about APPTAINERENV_HOME
-    # in the prose docstring don't trip the assertion.
-    code_only = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
-    assert "APPTAINERENV_HOME" not in code_only, (
+    # The cosmetic-warning filter intentionally references the warning
+    # text by exact string, so this assertion targets the failing pattern
+    # specifically (the `export APPTAINERENV_HOME=...` from the old code).
+    assert "export APPTAINERENV_HOME=" not in text, (
         "wrapper still exports APPTAINERENV_HOME — apptainer 1.3+ "
         "rejects it with a warning and HOME inside the SIF stays at "
         "the baked /home/agentuser default. Use `--env HOME=$HOME` "
@@ -394,6 +392,43 @@ def test_wrapper_pi_first_run_inner_exec_passes_home_via_env():
         "--env \"HOME=$HOME\" — the cp target inside the SIF would "
         "then resolve to /home/agentuser/.pi/agent/settings.json on "
         "tmpfs overlay and never persist to the host."
+    )
+
+
+def test_wrapper_filters_cosmetic_apptainer_warnings():
+    """Apptainer 1.3+ emits two stderr warnings that are cosmetic for our
+    wrapper and frighten end users:
+
+      1. "Overriding HOME environment variable with APPTAINERENV_HOME is
+         not permitted" — apptainer's check is paranoid; HOME *does* get
+         set via --env HOME=$HOME (verified by live probe 2026-04-27).
+      2. "destination is already in the mount point list" — apptainer
+         dedupes silently anyway, and _under_pwd already prevents it.
+
+    The wrapper installs a `grep -v` filter on stderr before the apptainer
+    exec, with CODING_AGENTS_VERBOSE=1 as the opt-out for debugging.
+    """
+    text = load_template()
+    # Filter must include both warning patterns.
+    assert "Overriding HOME environment variable with APPTAINERENV_HOME is not permitted" in text, (
+        "filter must mention the HOME-override warning by exact text"
+    )
+    assert "destination is already in the mount point list" in text, (
+        "filter must mention the duplicate-mount warning by exact text"
+    )
+    # Filter must be conditional on CODING_AGENTS_VERBOSE so debugging works.
+    assert "CODING_AGENTS_VERBOSE" in text, (
+        "filter must be opt-out via CODING_AGENTS_VERBOSE=1 so users can "
+        "see the unfiltered warnings when triaging real apptainer issues"
+    )
+    # The filter must execute BEFORE the final apptainer exec so the
+    # apptainer process inherits the redirected stderr.
+    filter_idx = text.index("Overriding HOME environment variable")
+    final_exec_idx = text.index("# --- Exec ---")
+    assert filter_idx < final_exec_idx, (
+        "filter must be set up before the final apptainer exec — "
+        "otherwise apptainer's warnings reach the user's terminal "
+        "before stderr is redirected"
     )
 
 

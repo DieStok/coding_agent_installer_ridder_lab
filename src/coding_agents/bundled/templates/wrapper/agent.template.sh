@@ -514,6 +514,23 @@ if [ "$AGENT_NAME" = "pi" ] && [ ! -f "$HOME/.pi/agent/settings.json" ]; then
     2>/dev/null || true
 fi
 
+# --- Filter cosmetic apptainer warnings ---
+# Two stderr lines from apptainer that are cosmetic in our wrapper:
+#   1. "Overriding HOME environment variable with APPTAINERENV_HOME is not
+#      permitted" — apptainer 1.3+ warns about it but actually does set
+#      HOME (verified by probe 2026-04-27: HOME inside the SIF resolves to
+#      the host HOME path with --env "HOME=$HOME"). The warning text is
+#      misleading.
+#   2. "destination is already in the mount point list" — belt-and-braces;
+#      _under_pwd in the per-agent case block already prevents this for
+#      $HOME/<sub> paths covered by --bind $PWD:$PWD, but the filter
+#      catches any future edge case.
+# Set CODING_AGENTS_VERBOSE=1 to see the unfiltered output for debugging.
+if [ -z "${CODING_AGENTS_VERBOSE:-}" ]; then
+  exec 2> >(grep -v -e 'Overriding HOME environment variable with APPTAINERENV_HOME is not permitted' \
+                    -e 'destination is already in the mount point list' >&2)
+fi
+
 # --- Exec ---
 exec apptainer exec \
   --containall \
