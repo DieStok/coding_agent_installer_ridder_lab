@@ -40,6 +40,12 @@ def test_convert_mcp_creates_claude_format():
 
 
 def test_convert_mcp_pi_format():
+    """Synthesis §3.10/§4.16/§5.21 + Sprint 1 Task 1.6: Pi mcp.json now
+    uses the imports directive to inherit MCP servers from Claude's
+    managed ~/.mcp.json via pi-mcp-adapter, instead of duplicating the
+    server entries. The previous test asserted ``mcpServers["gh"].lifecycle
+    == "lazy"`` which was the bug shape.
+    """
     from coding_agents.convert_mcp import convert_mcp
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -63,8 +69,13 @@ def test_convert_mcp_pi_format():
         pi_mcp = fake_home / ".pi" / "agent" / "mcp.json"
         assert pi_mcp.exists()
         data = json.loads(pi_mcp.read_text())
-        assert "settings" in data
-        assert data["mcpServers"]["gh"]["lifecycle"] == "lazy"
+        # New shape: imports directive + corrected toolPrefix; no
+        # duplicated mcpServers (those come from ~/.mcp.json).
+        assert data["imports"] == ["claude-code"]
+        assert data["toolPrefix"] == "short"
+        assert "mcpServers" not in data
+        # Pi-coding-agent's idleTimeout setting is preserved.
+        assert data["settings"]["idleTimeout"] == 10
 
 
 def test_convert_mcp_empty_servers():

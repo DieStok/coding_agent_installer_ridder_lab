@@ -60,12 +60,15 @@ def convert_mcp(servers_json: Path, agent_keys: list[str] | None = None) -> list
     if agent_keys is None:
         agent_keys = list(AGENTS.keys())
 
-    # Dispatch table — each format maps to a writer function
+    # Dispatch table — each format maps to a writer function.
+    # Note: gemini and amp continue to use the generic _write_json_mcp lambda;
+    # OpenCode now has a dedicated writer (Sprint 1 Task 1.5) because its
+    # Effect Schema is strict about the discriminated union shape.
     writers = {
         "claude": _write_claude,
         "codex": _write_codex,
         "pi": _write_pi,
-        "opencode": lambda s, h: _write_json_mcp(s, h, h / ".config/opencode/opencode.json", "mcp"),
+        "opencode": _write_opencode,
         "gemini": lambda s, h: _write_json_mcp(s, h, h / ".gemini/settings.json", "mcpServers"),
         "amp": lambda s, h: _write_json_mcp(s, h, h / ".config/amp/settings.json", "mcpServers"),
     }
@@ -149,18 +152,97 @@ def _write_codex(servers: dict, home: Path) -> list[str]:
 
 
 def _write_pi(servers: dict, home: Path) -> list[str]:
-    """Pi uses mcp.json with settings and lifecycle: lazy."""
-    mcp_servers = {}
-    for name, srv in servers.items():
-        entry = _build_entry(srv)
-        entry["lifecycle"] = "lazy"
-        mcp_servers[name] = entry
+    """Pi-coding-agent + pi-mcp-adapter via the ``imports`` directive.
+
+    Synthesis §3.10 / §4.16 / §5.21 + Sprint 1 Task 1.6: Pi inherits its
+    MCP servers from Claude's managed ``~/.mcp.json`` via pi-mcp-adapter's
+    ``imports: ["claude-code"]`` magic name, so we no longer maintain a
+    duplicate ``mcpServers`` dict here. Removes the dual-source-of-truth
+    risk that synthesis §10.1 documented as a recurring bug class.
+
+    Also fixes the ``toolPrefix`` enum violation: the previous value
+    ``"mcp"`` is not in pi-mcp-adapter's schema (``"server" | "none" |
+    "short"`` per pi-mcp-adapter/types.ts). ``"short"`` produces
+    ``<short>_<tool>`` tool names — the canonical convention.
+
+    The ``servers`` argument is now mostly informational — actual MCP
+    server entries live in Claude's ``~/.mcp.json`` (written by
+    ``_write_claude``). It's retained in the signature for dispatch-table
+    symmetry with the other writers.
+    """
+    from coding_agents.installer.policy_emit import _backup_if_drifted
 
     path = home / ".pi" / "agent" / "mcp.json"
     data = {
-        "settings": {"toolPrefix": "mcp", "idleTimeout": 10},
-        "mcpServers": mcp_servers,
+        # pi-mcp-adapter inherits Claude's managed MCP servers — single
+        # source of truth. Supported import targets: cursor, claude-code,
+        # claude-desktop, vscode, windsurf, codex.
+        "imports": ["claude-code"],
+        # toolPrefix is consumed by pi-mcp-adapter at startup; "short"
+        # gives <short>_<tool> tool names.
+        "toolPrefix": "short",
+        # idleTimeout is consumed by pi-coding-agent itself (not the
+        # adapter); preserved from the previous shape.
+        "settings": {"idleTimeout": 10},
     }
-    # Pi MCP is fully managed by us — overwrite
-    secure_write_text(path, json.dumps(data, indent=2) + "\n")
+    new_content = json.dumps(data, indent=2) + "\n"
+
+    # Back up any pre-existing user-managed mcp.json (e.g. from upgrading
+    # past an older version of this code that wrote a full mcpServers
+    # dict). _backup_if_drifted is idempotent and dry-run-aware.
+    dry_run_mkdir(path.parent)
+    _backup_if_drifted(path, new_content)
+    secure_write_text(path, new_content)
     return [str(path)]
+
+
+def _write_opencode(servers: dict, home: Path) -> list[str]:
+    """OpenCode's MCP config in ``~/.config/opencode/opencode.json``.
+
+    Synthesis §3.9 / Sprint 1 Task 1.5: OpenCode's Effect Schema (verified
+    against ``local_clones/opencode/packages/opencode/src/config/mcp.ts``)
+    rejects the generic ``{command, args, env}`` shape that the previous
+    ``_write_json_mcp`` lambda emitted. The real schema is a discriminated
+    union::
+
+        Local:  {type: "local", command: string[], environment?, enabled?, timeout?}
+        Remote: {type: "remote", url, headers?, oauth?, enabled?, timeout?}
+
+    Three concrete violations the old lambda made:
+      1. Missing the ``type`` discriminator literal.
+      2. ``command`` was a string instead of an array (Effect Schema
+         expects ``[cmd, ...args]``).
+      3. ``env`` should be ``environment``.
+
+    Effect Schema is strict; the entire entry was silently rejected and
+    no MCP servers ever registered in OpenCode. This writer emits the
+    correct shape so OpenCode actually loads them.
+    """
+    mcp = {}
+    for name, srv in servers.items():
+        if srv.get("url"):
+            entry: dict = {"type": "remote", "url": srv["url"]}
+            if srv.get("headers"):
+                entry["headers"] = srv["headers"]
+        else:
+            cmd = srv.get("command")
+            if not cmd:
+                _log.warning(
+                    "convert_mcp: OpenCode entry %r has neither command nor url; skipping",
+                    name,
+                )
+                continue
+            entry = {
+                "type": "local",
+                # command is an array of strings: [cmd, *args]
+                "command": [cmd, *srv.get("args", [])],
+            }
+            if srv.get("env"):
+                # Renamed from "env" to "environment" per Effect Schema.
+                entry["environment"] = srv["env"]
+        entry["enabled"] = True
+        mcp[name] = entry
+
+    config_path = home / ".config" / "opencode" / "opencode.json"
+    _merge_json(config_path, {"mcp": mcp})
+    return [str(config_path)]
