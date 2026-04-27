@@ -313,6 +313,14 @@ def uv_pip_install(venv_path: Path, packages: list[str], *, upgrade: bool = Fals
 # ---------------------------------------------------------------------------
 
 SHELL_MARKERS = ("# >>> coding-agents >>>", "# <<< coding-agents <<<")
+# Phase-4 path-shim block — separate marker pair so the existing block
+# stays untouched. Order matters: shim block injected AFTER the main block
+# so any conda/uv/pyenv re-prepends from upstream rc files don't clobber
+# our prefix.
+SHELL_MARKERS_PATH_SHIM = (
+    "# >>> coding-agents-path-shim >>>",
+    "# <<< coding-agents-path-shim <<<",
+)
 
 
 def render_shell_block(
@@ -347,21 +355,49 @@ def render_shell_block(
     return "\n".join(lines)
 
 
+def render_path_shim_block(install_dir: Path) -> str:
+    """Build the second rc block that prepends the OpenCode path-shim dir.
+
+    A separate marker block (rather than appending to the main block) so:
+      1. The existing block's tests don't change.
+      2. ``coding-agents uninstall`` can remove the shim block without
+         touching the main block (or vice-versa) for partial rollbacks.
+      3. Conda/uv/pyenv blocks that prepend their own bin dirs run first
+         (typical .bashrc order); our path-shim then wins on the next line.
+    """
+    path_str = str(install_dir / "bin" / "path-shim")
+    if not _SAFE_PATH_RE.match(path_str):
+        raise ValueError(f"Path-shim path contains unsafe characters: {path_str}")
+    quoted = shlex.quote(path_str)
+    return "\n".join([
+        SHELL_MARKERS_PATH_SHIM[0],
+        f'export PATH={quoted}:"$PATH"',
+        SHELL_MARKERS_PATH_SHIM[1],
+    ])
+
+
 def inject_shell_block(
     install_dir: Path,
     *,
     sandbox_sif_path: str = "",
     sandbox_secrets_dir: str = "",
     sandbox_logs_dir: str = "",
+    inject_path_shim: bool = False,
 ) -> list[Path]:
-    """Add PATH/env block to ~/.bashrc and ~/.zshrc (if zsh). Returns modified files."""
-    log.debug("inject_shell_block: install_dir=%s", install_dir)
+    """Add PATH/env block to ~/.bashrc and ~/.zshrc (if zsh). Returns modified files.
+
+    When ``inject_path_shim=True`` a second marker block is appended after
+    the main block to prepend ``<install_dir>/bin/path-shim`` to ``$PATH``
+    (Phase 4 — OpenCode wrapping).
+    """
+    log.debug("inject_shell_block: install_dir=%s shim=%s", install_dir, inject_path_shim)
     block = render_shell_block(
         install_dir,
         sandbox_sif_path=sandbox_sif_path,
         sandbox_secrets_dir=sandbox_secrets_dir,
         sandbox_logs_dir=sandbox_logs_dir,
     )
+    shim_block = render_path_shim_block(install_dir) if inject_path_shim else None
 
     rc_files = [Path.home() / ".bashrc"]
     shell = os.environ.get("SHELL", "")
@@ -376,24 +412,33 @@ def inject_shell_block(
             marker=SHELL_MARKERS[0],
             bytes=len(block),
         )
+        if shim_block:
+            would(
+                "shell_rc",
+                "inject_path_shim",
+                rc_files=rc_files,
+                marker=SHELL_MARKERS_PATH_SHIM[0],
+                bytes=len(shim_block),
+            )
         return rc_files
 
     modified = []
     for rc in rc_files:
         _write_guarded_block(rc, block)
+        if shim_block:
+            _write_guarded_block(rc, shim_block, markers=SHELL_MARKERS_PATH_SHIM)
         modified.append(rc)
     return modified
 
 
 def remove_shell_block() -> list[Path]:
-    """Remove the coding-agents block from shell rc files."""
-    # Pre-compute the list of rc files that *would* be modified — we need
-    # this both for real-run (same set) and dry-run logging.
+    """Remove both the main and path-shim coding-agents blocks from rc files."""
     candidates = []
     for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
         if not rc.exists():
             continue
-        if SHELL_MARKERS[0] in rc.read_text():
+        text = rc.read_text()
+        if SHELL_MARKERS[0] in text or SHELL_MARKERS_PATH_SHIM[0] in text:
             candidates.append(rc)
 
     if is_dry_run():
@@ -403,50 +448,68 @@ def remove_shell_block() -> list[Path]:
     modified = []
     for rc in candidates:
         content = rc.read_text()
-        lines = content.splitlines(keepends=True)
-        new_lines = []
-        inside = False
-        for line in lines:
-            if SHELL_MARKERS[0] in line:
-                inside = True
-                continue
-            if SHELL_MARKERS[1] in line:
-                inside = False
-                continue
-            if not inside:
-                new_lines.append(line)
-        rc.write_text("".join(new_lines))
+        for markers in (SHELL_MARKERS, SHELL_MARKERS_PATH_SHIM):
+            content = _strip_block(content, markers)
+        rc.write_text(content)
         modified.append(rc)
     return modified
 
 
-def _write_guarded_block(rc_file: Path, block: str) -> None:
-    """Write a marker-guarded block, replacing any existing one."""
+def _strip_block(content: str, markers: tuple[str, str]) -> str:
+    """Remove the marker-guarded block plus the blank-line gap that hugged it.
+
+    Why: ``_write_guarded_block`` injects the block with a leading "\\n\\n"
+    separator. If we leave the surrounding blank lines on strip, every
+    subsequent re-emit accumulates one more blank line. Collapsing
+    ``\\n\\n+`` runs to a single ``\\n`` after the strip keeps the file
+    byte-stable across repeated installs.
+    """
+    lines = content.splitlines(keepends=True)
+    new_lines = []
+    inside = False
+    for line in lines:
+        if markers[0] in line:
+            inside = True
+            continue
+        if markers[1] in line:
+            inside = False
+            continue
+        if not inside:
+            new_lines.append(line)
+    out = "".join(new_lines)
+    # Collapse any run of ≥ 2 consecutive blank lines (left behind when our
+    # block sat sandwiched between blank padding) into a single newline.
+    while "\n\n\n" in out:
+        out = out.replace("\n\n\n", "\n\n")
+    return out
+
+
+def _write_guarded_block(
+    rc_file: Path,
+    block: str,
+    markers: tuple[str, str] = SHELL_MARKERS,
+) -> None:
+    """Write a marker-guarded block, replacing any existing one with the same markers.
+
+    Idempotent on byte identity: trailing blank lines are normalised so a
+    second injection does not accumulate extra newlines around the block.
+    """
     if rc_file.exists():
         content = rc_file.read_text()
     else:
         content = ""
 
-    if SHELL_MARKERS[0] in content:
-        # Replace existing block
-        lines = content.splitlines(keepends=True)
-        new_lines = []
-        inside = False
-        for line in lines:
-            if SHELL_MARKERS[0] in line:
-                inside = True
-                continue
-            if SHELL_MARKERS[1] in line:
-                inside = False
-                continue
-            if not inside:
-                new_lines.append(line)
-        content = "".join(new_lines)
+    if markers[0] in content:
+        content = _strip_block(content, markers)
 
-    # Append
-    if not content.endswith("\n"):
-        content += "\n"
-    content += "\n" + block + "\n"
+    # Normalise: collapse trailing newlines to exactly one, then add the
+    # canonical "blank line + block + newline" suffix. Keeps repeated calls
+    # from accumulating empty lines around the block.
+    content = content.rstrip("\n")
+    if content:
+        content += "\n\n" + block + "\n"
+    else:
+        content = block + "\n"
     rc_file.write_text(content)
 
 

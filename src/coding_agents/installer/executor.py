@@ -170,12 +170,14 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
 
     # --- 9. Shell integration ---
     _phase("🐚  Setting up shell integration…")
+    inject_shim = state.mode != "local" and "opencode" in state.agents
     modified = await _run_in_thread(
         lambda: inject_shell_block(
             install_dir,
             sandbox_sif_path=state.sandbox_sif_path if state.mode != "local" else "",
             sandbox_secrets_dir=state.sandbox_secrets_dir if state.mode != "local" else "",
             sandbox_logs_dir=state.sandbox_logs_dir if state.mode != "local" else "",
+            inject_path_shim=inject_shim,
         )
     )
     for f in modified:
