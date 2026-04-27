@@ -125,7 +125,14 @@ def merge_json_section(
             current_value = []
 
         if isinstance(current_value, list):
-            if all(isinstance(e, str) for e in current_value):
+            # Branch on what we're *adding*, not just what's already there:
+            # an empty existing list passes the all-strings check vacuously,
+            # which previously routed dict-shaped hook entries into the
+            # set-union path and tripped "unhashable type: dict" on the
+            # `entry not in existing_set` test.
+            our_are_strings = all(isinstance(e, str) for e in our_entries)
+            existing_are_strings = all(isinstance(e, str) for e in current_value)
+            if our_are_strings and existing_are_strings:
                 # String list (e.g., deny rules) — simple set union
                 existing_set = set(current_value)
                 result.preserved_keys = list(existing_set)

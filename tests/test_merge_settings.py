@@ -193,3 +193,31 @@ def test_merge_result_has_correct_fields():
     assert "hooks.SessionStart" in r.summary()
     assert "added 1" in r.summary()
     assert "preserved 1" in r.summary()
+
+
+def test_merge_json_dict_entries_into_empty_existing_list():
+    """Regression: empty existing list passed `all(isinstance(e, str))`
+    vacuously, routing dict-shaped hook entries into the set-union path
+    where `dict in set()` raised "unhashable type: dict"."""
+    from coding_agents.merge_settings import merge_json_section
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = Path(f.name)
+
+    try:
+        path.write_text(json.dumps({"hooks": {"SessionStart": []}}))
+        hook_entries = [
+            {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "/path/to/on_start_hook.sh"}],
+            }
+        ]
+
+        result = merge_json_section(path, "hooks.SessionStart", hook_entries)
+
+        data = json.loads(path.read_text())
+        assert len(data["hooks"]["SessionStart"]) == 1
+        assert data["hooks"]["SessionStart"][0]["_coding_agents_managed"] is True
+        assert len(result.added_keys) == 1
+    finally:
+        path.unlink(missing_ok=True)
