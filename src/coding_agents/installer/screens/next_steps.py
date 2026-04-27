@@ -1,9 +1,8 @@
 """Step 7 — Post-install "next steps" screen.
 
-Shown after a successful install. Lists what the user needs to do next,
-with copy-friendly commands and clickable doc links. The same step list
-is printed to the host terminal on TUI exit so users can act on it
-without having to scroll back through the install log.
+Minimal one-line-per-step bullet list. The detailed instructions
+(commands + clickable VSCode marketplace links) are printed to the host
+terminal on Exit, so the screen stays scannable.
 """
 from __future__ import annotations
 
@@ -33,28 +32,20 @@ class NextStepsScreen(Screen):
         with Vertical(id="step-container"):
             yield Label("✓ Installation complete — Next steps", classes="step-title")
             yield Static(
-                "Each step below has a runnable command or doc link. The "
-                "full list will also be printed to your terminal when you "
-                "press Exit, so you can copy-paste from there.",
-                classes="step-description",
+                "[bold]Press Exit to print the full step-by-step instructions "
+                "(with runnable commands and clickable VSCode marketplace + "
+                "extension-install links) to your terminal.[/bold]",
+                classes="banner-info",
             )
             with VerticalScroll(id="next-steps-scroll"):
                 for i, step in enumerate(self.steps, start=1):
-                    yield Static(f"[bold]{i}. {step.title}[/bold]",
-                                 classes="section-heading")
-                    yield Static(step.body, classes="section-body")
-                    if step.action is not None:
-                        kind, payload = step.action
-                        if kind == "cmd":
-                            yield Static(
-                                f"    [cyan]$ {payload}[/cyan]",
-                                classes="section-body",
-                            )
-                        elif kind == "url":
-                            yield Static(
-                                f"    [dim]→ {payload}[/dim]",
-                                classes="section-body",
-                            )
+                    yield Static(f"  {i}.  {step.title}", classes="section-body")
+            yield Static(
+                "[dim]The terminal output uses OSC-8 hyperlinks (Cmd-click / "
+                "Ctrl-click in modern terminals — iTerm2, kitty, gnome-terminal, "
+                "Windows Terminal, wezterm).[/dim]",
+                classes="muted",
+            )
             with Center(classes="nav"):
                 yield Button("Exit", variant="primary", id="btn-exit")
 

@@ -78,7 +78,26 @@ def test_render_terminal_marks_runnable_commands():
 def test_render_terminal_marks_url_steps():
     steps = build_next_steps(_state(agents=[]))
     out = render_terminal(steps)
-    assert "→ docs/vscode_integration.md" in out
+    assert "docs/vscode_integration.md" in out
+    # OSC-8 hyperlink wrapping (start sequence + label visible)
+    assert "\x1b]8;;docs/vscode_integration.md\x07docs/vscode_integration.md" in out
+
+
+def test_render_terminal_renders_ext_links_with_osc8():
+    steps = build_next_steps(_state(agents=["claude", "codex", "opencode", "pi"]))
+    out = render_terminal(steps)
+    # Each extension produces vscode: + marketplace OSC-8 wrappers
+    assert "\x1b]8;;vscode:extension/anthropic.claude-code" in out
+    assert "marketplace.visualstudio.com/items?itemName=anthropic.claude-code" in out
+    # CLI fallback also present
+    assert "code --install-extension anthropic.claude-code" in out
+
+
+def test_ext_links_step_carries_all_selected_agents():
+    steps = build_next_steps(_state(agents=["pi", "codex"]))
+    ext_step = next(s for s in steps if s.ext_links)
+    keys = {pair[0] for pair in ext_step.ext_links}
+    assert keys == {"pi", "codex"}
 
 
 def test_steps_are_dataclass_frozen():

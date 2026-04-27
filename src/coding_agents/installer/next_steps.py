@@ -1,15 +1,17 @@
 """Build the post-install "what to do next" step list.
 
 Single source of truth so the TUI screen and the terminal print-on-exit
-render identical content. Each step is a (title, body, action) tuple where
-``action`` is either:
-    * a ``("cmd", "<shell command>")`` — runnable copy-paste
-    * a ``("url", "https://...")`` — clickable link
-    * ``None`` — informational only
+render identical content. Each step has:
+    * ``action``    optional ``("cmd"|"url", payload)`` — single command or URL
+    * ``ext_links`` optional list of (ext_id, agent_key) — renders one row
+                    per extension with a clickable "Open in VSCode" link, a
+                    "Marketplace" link, and the ``code --install-extension``
+                    command on the same row.
+    * ``None`` for both → informational only
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from coding_agents.agents import AGENTS, agents_with_vscode_ext
 from coding_agents.installer.state import InstallerState
@@ -20,6 +22,15 @@ class Step:
     title: str
     body: str
     action: tuple[str, str] | None = None  # ("cmd"|"url", payload)
+    ext_links: tuple[tuple[str, str], ...] = ()  # ((agent_key, ext_id), ...)
+
+
+def _vscode_uri(ext_id: str) -> str:
+    return f"vscode:extension/{ext_id}"
+
+
+def _marketplace_url(ext_id: str) -> str:
+    return f"https://marketplace.visualstudio.com/items?itemName={ext_id}"
 
 
 def build_next_steps(state: InstallerState) -> list[Step]:
@@ -67,20 +78,19 @@ def build_next_steps(state: InstallerState) -> list[Step]:
     if wrappable:
         ext_pairs = agents_with_vscode_ext(state.agents)
         if ext_pairs:
-            ext_lines = "\n".join(
-                f"  - {AGENTS[k]['display_name']}: code --install-extension {ext}"
-                for k, ext in ext_pairs
-            )
             steps.append(Step(
                 title="Install the VSCode extensions for your selected agents",
                 body=(
-                    "If VSCode is connected to this host via Remote-SSH, "
-                    "the installer wrote a workspace `extensions.json` "
-                    "recommendation. To install in your VSCode-server (or "
-                    "force a particular version), use the commands below.\n"
-                    f"{ext_lines}"
+                    "Click 'Open in VSCode' to launch the install directly in "
+                    "your local VSCode (terminal must register the vscode: "
+                    "URL handler — iTerm2, kitty, modern gnome-terminal, "
+                    "Windows Terminal, wezterm all do this when VSCode is "
+                    "installed). 'Marketplace' opens the web page as a "
+                    "fallback. Or copy the `code --install-extension` "
+                    "command to install via the CLI."
                 ),
                 action=None,
+                ext_links=tuple((k, ext) for k, ext in ext_pairs),
             ))
 
     # 5. VSCode wrapper-hooks paste-block (only if Settings Sync hides the file).
@@ -140,11 +150,28 @@ def build_next_steps(state: InstallerState) -> list[Step]:
     return steps
 
 
+def _osc8(label: str, url: str) -> str:
+    """Wrap ``label`` in an OSC-8 hyperlink escape sequence.
+
+    Modern terminals (iTerm2, kitty, gnome-terminal, Windows Terminal,
+    wezterm, alacritty) render this as an underlined clickable link. Older
+    terminals strip the escape and just show ``label``.
+    """
+    BEL = "\x07"
+    return f"\x1b]8;;{url}{BEL}{label}\x1b]8;;{BEL}"
+
+
 def render_terminal(steps: list[Step]) -> str:
-    """Render the step list as plain ANSI-bold text for printing on TUI exit."""
+    """Render the step list as ANSI-styled text for printing on TUI exit.
+
+    Uses OSC-8 hyperlinks for URLs and extension links, ANSI bold for step
+    titles, cyan for runnable commands. Plain-text fallback is intact —
+    terminals without OSC-8 support just see the labels without underlines.
+    """
     lines: list[str] = []
     BOLD = "\033[1m"
     DIM = "\033[2m"
+    UNDER = "\033[4m"
     CYAN = "\033[36m"
     GREEN = "\033[32m"
     RESET = "\033[0m"
@@ -152,7 +179,6 @@ def render_terminal(steps: list[Step]) -> str:
     lines.append(f"\n{BOLD}{GREEN}Next steps{RESET}\n")
     for i, step in enumerate(steps, start=1):
         lines.append(f"{BOLD}{i}. {step.title}{RESET}")
-        # Indent body lines.
         for body_line in step.body.splitlines():
             lines.append(f"   {body_line}")
         if step.action is not None:
@@ -160,6 +186,21 @@ def render_terminal(steps: list[Step]) -> str:
             if kind == "cmd":
                 lines.append(f"   {CYAN}$ {payload}{RESET}")
             elif kind == "url":
-                lines.append(f"   {DIM}→ {payload}{RESET}")
+                lines.append(f"   {DIM}→ {_osc8(payload, payload)}{RESET}")
+        for agent_key, ext_id in step.ext_links:
+            display_name = AGENTS.get(agent_key, {}).get("display_name", agent_key)
+            open_link = _osc8("Open in VSCode", _vscode_uri(ext_id))
+            mp_link = _osc8("Marketplace", _marketplace_url(ext_id))
+            lines.append(
+                f"   • {BOLD}{display_name}{RESET} "
+                f"({DIM}{ext_id}{RESET})"
+            )
+            lines.append(
+                f"       {UNDER}{open_link}{RESET}   ·   "
+                f"{UNDER}{mp_link}{RESET}"
+            )
+            lines.append(
+                f"       {CYAN}$ code --install-extension {ext_id}{RESET}"
+            )
         lines.append("")  # blank between steps
     return "\n".join(lines)
