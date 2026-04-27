@@ -339,12 +339,16 @@ fi
 # rules cover ~/.ssh, ~/.aws, etc., and the cwd-bind keeps the agent
 # away from anything not explicitly bound).
 #
-# Inside the SIF, $HOME is normally /home/agentuser/. We pass
-# APPTAINERENV_HOME so the in-container HOME matches the host path —
-# that way `~/.<agent>` inside the SIF resolves to the same location
-# the user already uses on the host. If $HOME is missing pieces (just
-# the bound subdir is present), Apptainer's tmpfs overlay creates
-# empty parent dirs as needed.
+# Inside the SIF, $HOME is normally /home/agentuser/. We pass HOME via
+# `--env HOME="$HOME"` on the apptainer exec line below so the
+# in-container HOME matches the host path — that way `~/.<agent>` inside
+# the SIF resolves to the same location the user already uses on the
+# host. If $HOME is missing pieces (just the bound subdir is present),
+# Apptainer's tmpfs overlay creates empty parent dirs as needed.
+# (Apptainer 1.3+ refuses to set HOME via the generic APPTAINERENV_HOME
+# mechanism — "Overriding HOME environment variable with APPTAINERENV_HOME
+# is not permitted" — and silently falls back to the SIF's baked
+# /home/agentuser. `--env` is the supported escape hatch.)
 #
 # TODO (optional, post-MVP): relocate all ~/.{claude,codex,pi,opencode}
 # state into <install_dir>/state/<agent>/ via per-agent env vars
@@ -357,6 +361,18 @@ fi
 # see HPC sessions unless the env vars are also set in the user's
 # shell rc), and (b) some agents only honour these env vars in recent
 # versions — needs per-agent verification.
+# Helper: skip a bind whose target is already covered by --bind $PWD:$PWD.
+# Apptainer logs "destination is already in the mount point list" for
+# duplicates and dedupes them anyway, but the warning noise is
+# cosmetically alarming when the user's cwd happens to be $HOME (every
+# per-agent home subdir bind then warns).
+_under_pwd() {
+  case "$1" in
+    "$PWD"|"$PWD"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 AGENT_HOME_BINDS=()
 case "$AGENT_NAME" in
   claude)
@@ -368,8 +384,7 @@ case "$AGENT_NAME" in
       # the SIF. The per-session .credentials.json copy below
       # (CREDS_BINDS) overlays the bind with a read-only tmpfs entry
       # so a hostile agent can't rewrite the credentials file.
-      AGENT_HOME_BINDS+=( --bind "$HOME/.claude:$HOME/.claude" )
-      export APPTAINERENV_HOME="$HOME"
+      _under_pwd "$HOME/.claude" || AGENT_HOME_BINDS+=( --bind "$HOME/.claude:$HOME/.claude" )
     else
       echo "agent-${AGENT_NAME}: failed to create ~/.claude for bind-mount." >&2
       exit 11
@@ -385,8 +400,7 @@ case "$AGENT_NAME" in
       # agent runs unsandboxed-by-config (still cwd-confined by
       # Apptainer, but the per-agent policy is unread). Also covers
       # auth.json (OAuth-based providers) and sessions/.
-      AGENT_HOME_BINDS+=( --bind "$HOME/.codex:$HOME/.codex" )
-      export APPTAINERENV_HOME="$HOME"
+      _under_pwd "$HOME/.codex" || AGENT_HOME_BINDS+=( --bind "$HOME/.codex:$HOME/.codex" )
     else
       echo "agent-${AGENT_NAME}: failed to create ~/.codex for bind-mount." >&2
       exit 11
@@ -395,8 +409,7 @@ case "$AGENT_NAME" in
   pi)
     mkdir -p "$HOME/.pi/agent"
     if [ -d "$HOME/.pi/agent" ]; then
-      AGENT_HOME_BINDS+=( --bind "$HOME/.pi/agent:$HOME/.pi/agent" )
-      export APPTAINERENV_HOME="$HOME"
+      _under_pwd "$HOME/.pi/agent" || AGENT_HOME_BINDS+=( --bind "$HOME/.pi/agent:$HOME/.pi/agent" )
     else
       echo "agent-${AGENT_NAME}: failed to create ~/.pi/agent for bind-mount." >&2
       exit 11
@@ -407,7 +420,7 @@ case "$AGENT_NAME" in
     for sub in .config/opencode .local/share/opencode .cache/opencode .local/state/opencode; do
       mkdir -p "$HOME/$sub"
       if [ -d "$HOME/$sub" ]; then
-        AGENT_HOME_BINDS+=( --bind "$HOME/$sub:$HOME/$sub" )
+        _under_pwd "$HOME/$sub" || AGENT_HOME_BINDS+=( --bind "$HOME/$sub:$HOME/$sub" )
       else
         OC_OK=false
         echo "agent-${AGENT_NAME}: failed to create ~/$sub for bind-mount." >&2
@@ -416,7 +429,6 @@ case "$AGENT_NAME" in
     if ! $OC_OK; then
       exit 11
     fi
-    export APPTAINERENV_HOME="$HOME"
     # OpenCode ships with default plugins; in HPC mode we let the
     # user/lab inject their own via OPENCODE_CONFIG. Disabling the
     # defaults avoids surprise auto-fetches during SLURM jobs.
@@ -489,8 +501,13 @@ fi
 # up on the very first message. Best-effort — never blocks the agent.
 if [ "$AGENT_NAME" = "pi" ] && [ ! -f "$HOME/.pi/agent/settings.json" ]; then
   mkdir -p "$HOME/.pi/agent"
+  # --env HOME makes the inner shell's $HOME match the host path so the
+  # cp target lands at the bind-mounted host location. Without this the
+  # cp writes to /home/agentuser/.pi/agent/ on the SIF tmpfs overlay,
+  # which evaporates on exec exit — the user never sees the seeded file.
   apptainer exec \
     --containall \
+    --env "HOME=$HOME" \
     --bind "$HOME/.pi/agent:$HOME/.pi/agent:rw" \
     "$SIF_RESOLVED" \
     sh -c 'test -r /opt/pi-default-settings.json && cp /opt/pi-default-settings.json "$HOME/.pi/agent/settings.json"' \
@@ -502,6 +519,7 @@ exec apptainer exec \
   --containall \
   --no-mount home,tmp \
   --writable-tmpfs \
+  --env "HOME=$HOME" \
   --bind "$PWD:$PWD" \
   --pwd "$PWD" \
   --no-privs \

@@ -315,10 +315,12 @@ def test_wrapper_binds_codex_home():
 def test_wrapper_credentials_no_longer_overlay_at_agentuser_path():
     """Pre-Sprint-1.5 the wrapper did
         --bind $TMP/.credentials.json:/home/agentuser/.claude/.credentials.json:ro
-    That target path was wrong once APPTAINERENV_HOME=$HOME made
-    in-container HOME match the host's HOME path. Now that the whole
-    ~/.claude/ is bound writable, the per-file overlay is removed (and
-    the wrapper no longer breaks Claude's live OAuth token refresh).
+    That target path was wrong once we started setting in-container HOME
+    to match the host's HOME (originally via APPTAINERENV_HOME, then
+    --env HOME on apptainer 1.3+ which refuses APPTAINERENV_HOME).
+    Now that the whole ~/.claude/ is bound writable, the per-file
+    overlay is removed (and the wrapper no longer breaks Claude's live
+    OAuth token refresh).
 
     Strip comments before the check so inline historical notes about
     the old path don't cause a false positive.
@@ -337,9 +339,89 @@ def test_wrapper_credentials_no_longer_overlay_at_agentuser_path():
     code_only = "\n".join(code_only_lines)
     assert "/home/agentuser/.claude" not in code_only, (
         "wrapper still has an active --bind targeting /home/agentuser/.claude/ "
-        "— that target is incorrect since APPTAINERENV_HOME now sets in-container "
-        "HOME to the host path."
+        "— that target is incorrect since `--env HOME=$HOME` now sets "
+        "in-container HOME to the host path."
     )
+
+
+def test_wrapper_passes_home_via_env_flag_not_apptainerenv():
+    """Apptainer 1.3+ refuses to override HOME via the generic
+    APPTAINERENV_HOME mechanism with the warning:
+        "Overriding HOME environment variable with APPTAINERENV_HOME
+         is not permitted"
+    and silently falls back to the SIF's baked /home/agentuser. That
+    breaks every per-agent home bind because the agent looks for
+    ~/.<agent> under /home/agentuser instead of the host HOME path
+    where we bind-mounted it.
+
+    Required mechanism: pass HOME via `--env HOME="$HOME"` on the
+    apptainer exec line, which is supported on 1.4+.
+    """
+    text = load_template()
+    # Drop full-line comments so historical notes about APPTAINERENV_HOME
+    # in the prose docstring don't trip the assertion.
+    code_only = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "APPTAINERENV_HOME" not in code_only, (
+        "wrapper still exports APPTAINERENV_HOME — apptainer 1.3+ "
+        "rejects it with a warning and HOME inside the SIF stays at "
+        "the baked /home/agentuser default. Use `--env HOME=$HOME` "
+        "on the apptainer exec instead."
+    )
+    # Main exec must pass HOME via --env.
+    assert '--env "HOME=$HOME"' in text, (
+        "main apptainer exec is missing --env \"HOME=$HOME\" — without "
+        "it the in-container HOME falls back to the SIF default and "
+        "every per-agent home bind resolves to the wrong path."
+    )
+
+
+def test_wrapper_pi_first_run_inner_exec_passes_home_via_env():
+    """The Pi first-run seed copies /opt/pi-default-settings.json into
+    the user's ~/.pi/agent/settings.json via an inner apptainer exec.
+    Without --env HOME=$HOME the inner shell's $HOME resolves to the
+    SIF's baked /home/agentuser, the cp lands on the tmpfs overlay,
+    and evaporates on exec exit — the seeded settings never reach the
+    host. (Easy to miss because the line ends `2>/dev/null || true`.)
+    """
+    text = load_template()
+    pi_first_run_block_start = text.index('AGENT_NAME" = "pi"')
+    pi_first_run_block = text[pi_first_run_block_start:]
+    pi_first_run_block = pi_first_run_block[: pi_first_run_block.index("# --- Exec ---")]
+    assert '--env "HOME=$HOME"' in pi_first_run_block, (
+        "Pi first-run inner apptainer exec is missing "
+        "--env \"HOME=$HOME\" — the cp target inside the SIF would "
+        "then resolve to /home/agentuser/.pi/agent/settings.json on "
+        "tmpfs overlay and never persist to the host."
+    )
+
+
+def test_wrapper_skips_home_bind_when_under_pwd():
+    """When $PWD == $HOME (a common case — users SSH in and just
+    `opencode --port ...` from their home), `--bind $PWD:$PWD` already
+    covers the whole home, so `--bind $HOME/.config/opencode:...`
+    becomes redundant and apptainer warns
+        "destination is already in the mount point list"
+    once per duplicate (4× for opencode). Cosmetic but alarming.
+
+    Wrapper's `_under_pwd` helper short-circuits each per-agent bind
+    when its target falls under $PWD, eliminating the duplicates.
+    """
+    text = load_template()
+    assert "_under_pwd()" in text, "missing _under_pwd helper function"
+    # Each of the four agents must use the helper as a guard.
+    for agent_marker in (
+        '_under_pwd "$HOME/.claude"',
+        '_under_pwd "$HOME/.codex"',
+        '_under_pwd "$HOME/.pi/agent"',
+        '_under_pwd "$HOME/$sub"',
+    ):
+        assert agent_marker in text, (
+            f"missing `{agent_marker}` guard — per-agent home bind "
+            f"will fire even when its target is already under $PWD, "
+            f"triggering apptainer 'already in mount point list' warning."
+        )
 
 
 def test_wrapper_claude_login_existence_gate_preserved():
@@ -371,12 +453,16 @@ def test_wrapper_binds_four_opencode_dirs():
     assert "APPTAINERENV_OPENCODE_DISABLE_DEFAULT_PLUGINS=1" in text
 
 
-def test_wrapper_passes_apptainerenv_home_for_bind_compat():
+def test_wrapper_passes_home_via_env_for_bind_compat():
     """The bind-mount path uses $HOME on the host; the in-container HOME
     must match so ~/.pi/agent and ~/.config/opencode/ resolve to the
-    bound paths inside the SIF."""
+    bound paths inside the SIF.
+
+    Mechanism updated 2026-04-27: apptainer 1.3+ refuses APPTAINERENV_HOME
+    with a warning and silently leaves HOME at the SIF default. We now
+    use `--env "HOME=$HOME"` on the apptainer exec instead."""
     text = load_template()
-    assert 'APPTAINERENV_HOME="$HOME"' in text
+    assert '--env "HOME=$HOME"' in text
 
 
 def test_wrapper_opencode_passthrough_allowlist():
