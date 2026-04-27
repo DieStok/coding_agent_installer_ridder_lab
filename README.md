@@ -115,6 +115,24 @@ touching anything (implies `--debug`, writes a log under
 | `doctor` | Health check with color-coded pass/warn/fail + fix commands |
 | `uninstall` | Clean removal of all installed components |
 
+## Sandboxing reference
+
+Wondering when the Apptainer sandbox actually applies and when it doesn't? See
+the dedicated reference:
+
+**[`docs/possible_coding_agent_launch_flow_and_how_they_are_sandboxed_27_04_2026.md`](docs/possible_coding_agent_launch_flow_and_how_they_are_sandboxed_27_04_2026.md)**
+
+It enumerates every plausible way to start an agent (sidebar click, integrated
+terminal, plain SSH terminal, `sbatch`, cron, systemd, debug adapter, …) and
+walks through what catches each — settings.json hook, shell-rc PATH-prefix,
+direct wrapper invocation, or one of the documented gaps (cron / systemd /
+hardcoded paths in third-party extensions). Every case has a worked example
+with process tree and recovery hints.
+
+If you're integrating the package into automation that runs outside an
+interactive shell (cron, systemd, CI), read §21 / §22 / §17 first to avoid a
+silent un-sandboxed invocation.
+
 ## Installer Walkthrough
 
 `coding-agents install` is a Textual TUI with seven screens. Every step has a
