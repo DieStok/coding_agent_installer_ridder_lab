@@ -112,8 +112,31 @@ touching anything (implies `--debug`, writes a log under
 | `update` | Update all agents + tools to latest, re-sync configs |
 | `project-init [path]` | Bootstrap a project directory with AGENTS.md, hooks, agent configs |
 | `sync` | Re-distribute shared config to all agent-native locations |
-| `doctor` | Health check with color-coded pass/warn/fail + fix commands |
+| `doctor [--scan-cron] [--scan-systemd]` | Health check; optional scans surface bare CLI invocations in user crontabs / systemd-user units |
+| `vscode-reset` | Clear the cached VSCode SLURM session jobid (best-effort `scancel`); use after a session goes stale |
 | `uninstall` | Clean removal of all installed components |
+
+### VSCode extension wrapping
+
+When at least one of Claude Code / ChatGPT-Codex / OpenCode v2 / Pi is
+selected during install (HPC mode), the installer also wires the
+extensions' "spawn" hooks into our SIF wrapper:
+
+- **Claude / Codex / Pi**: a per-extension key in
+  `~/.vscode-server/data/User/settings.json` (or `.cursor-server/...`)
+  points at `<install_dir>/bin/agent-<n>-vscode`.
+- **OpenCode v2** (no settings hook): a `<install_dir>/bin/path-shim/`
+  dir is prepended to `$PATH` via a second shell-rc block, plus the
+  `terminal.integrated.env.linux.PATH` setting as defence-in-depth.
+- **`agent-vscode` helper** copied to `<install_dir>/bin/` allocates a
+  per-Cursor-session SLURM job (`salloc --no-shell` at first spawn,
+  cached under `flock` at `${XDG_RUNTIME_DIR:-$HOME/.coding-agents}/vscode-session.json`)
+  and dispatches every subsequent spawn via `srun --jobid=<id>` into the
+  existing terminal `agent-<n>` wrapper.
+- Set `CODING_AGENTS_NO_WRAP=1` to bypass the wrap entirely (escape hatch
+  for debugging — `doctor` surfaces it as a warning).
+- Run `coding-agents vscode-reset` if a session goes wrong (e.g. after
+  Cursor restart while a salloc was retrying); next spawn re-allocates fresh.
 
 ## Sandboxing reference
 
