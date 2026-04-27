@@ -167,11 +167,23 @@ def doctor(
         "--scan-systemd",
         help="Scan systemd-user units for bare CLI invocations.",
     ),
+    probe_sif: bool = typer.Option(
+        False,
+        "--probe-sif",
+        help=(
+            "Run `apptainer exec SIF <bin> --version` per baked tool to "
+            "verify the binary is actually present in the SIF (not just "
+            "declared in %labels). Slow (~5s); use after a SIF rebuild "
+            "to confirm everything landed."
+        ),
+    ),
 ) -> None:
     """Health check with color-coded pass/warn/fail and fix commands."""
     from coding_agents.commands.doctor import run_doctor
 
-    raise typer.Exit(run_doctor(scan_cron=scan_cron, scan_systemd=scan_systemd))
+    raise typer.Exit(run_doctor(
+        scan_cron=scan_cron, scan_systemd=scan_systemd, probe_sif=probe_sif,
+    ))
 
 
 @app.command(name="vscode-reset")

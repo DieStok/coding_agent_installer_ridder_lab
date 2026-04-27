@@ -345,10 +345,14 @@ fi
 # the SIF resolves to the same location the user already uses on the
 # host. If $HOME is missing pieces (just the bound subdir is present),
 # Apptainer's tmpfs overlay creates empty parent dirs as needed.
-# (Apptainer 1.3+ refuses to set HOME via the generic APPTAINERENV_HOME
-# mechanism — "Overriding HOME environment variable with APPTAINERENV_HOME
-# is not permitted" — and silently falls back to the SIF's baked
-# /home/agentuser. `--env` is the supported escape hatch.)
+#
+# Note: `--env HOME=$HOME` does NOT silence apptainer's cosmetic
+# "Overriding HOME environment variable with APPTAINERENV_HOME is not
+# permitted" warning — apptainer translates `--env KEY=val` to
+# `APPTAINERENV_KEY=val` internally and warns on the translated form.
+# It does, however, actually set HOME inside the container despite the
+# warning (verified by probe 2026-04-27). The warning is silenced by
+# the stderr-filter block further down (search CODING_AGENTS_VERBOSE).
 #
 # TODO (optional, post-MVP): relocate all ~/.{claude,codex,pi,opencode}
 # state into <install_dir>/state/<agent>/ via per-agent env vars

@@ -453,6 +453,24 @@ async def _install_tools(
     /opt/agents/node_modules/.bin/biome. Saves ~5–30 s on slow HPC egress.
     Local mode still installs biome on the host since there's no SIF.
     """
+    # Sweep stale host-side npm artifacts left over from pre-9b87b0b
+    # installs (biome lived in tools/node_modules/.bin/ before being baked
+    # into the SIF). Re-install does not otherwise remove these — they
+    # would shadow the SIF copy on PATH in HPC mode. Local mode keeps the
+    # dir untouched (host npm install still happens below for biome).
+    if mode == "hpc":
+        stale_node_modules = install_dir / "tools" / "node_modules"
+        if stale_node_modules.exists():
+            if is_dry_run():
+                would("rmtree", "remove", path=stale_node_modules,
+                      reason="HPC mode: tools live in SIF, not host node_modules")
+            else:
+                shutil.rmtree(stale_node_modules)
+                log.write(
+                    "  [dim]HPC mode: swept stale tools/node_modules/ "
+                    "(biome and friends now live in the SIF)[/dim]"
+                )
+
     venv_path = install_dir / "tools" / ".venv"
 
     # Python tools need a venv

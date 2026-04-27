@@ -221,6 +221,16 @@ def safe_symlink(source: Path, target: Path) -> None:
     If *target* already exists as a regular file, it is backed up to .bak.
     """
     log.debug("safe_symlink: %s → %s", source, target)
+    # Reject self-loops loudly. A symlink whose target equals its own path
+    # produces ELOOP ("Too many levels of symbolic links") on every read.
+    # The 7f7490b fix removed one path that produced this silently (via
+    # target.resolve() following an existing link); this guard is
+    # defence-in-depth for any caller that hands us source == target.
+    if source.absolute() == target.absolute():
+        raise ValueError(
+            f"safe_symlink: refusing to create self-loop "
+            f"(source == target == {target.absolute()})"
+        )
     if is_dry_run():
         would(
             "symlink",

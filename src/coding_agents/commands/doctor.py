@@ -18,7 +18,12 @@ from coding_agents.config import load_config, get_install_dir
 console = Console()
 
 
-def run_doctor(*, scan_cron: bool = False, scan_systemd: bool = False) -> int:
+def run_doctor(
+    *,
+    scan_cron: bool = False,
+    scan_systemd: bool = False,
+    probe_sif: bool = False,
+) -> int:
     """Run all health checks. Returns 0 if all pass, 1 if any fail."""
     config = load_config()
     if not config.get("install_dir"):
@@ -37,6 +42,9 @@ def run_doctor(*, scan_cron: bool = False, scan_systemd: bool = False) -> int:
 
     checks = _gather_checks(install_dir, agents, config)
     checks.extend(_gather_vscode_checks(install_dir, config, agents))
+    _add_cli_source_drift_check(checks)
+    if probe_sif:
+        _add_sif_runtime_probes(checks, config)
     if scan_cron:
         from coding_agents.commands.doctor_vscode import scan_crontab
         checks.extend(scan_crontab())
@@ -435,3 +443,157 @@ def _add_sandbox_checks(checks: list[tuple[str, str, str]], config: dict) -> Non
                 "pass" if cmode == 0o600 else "warn",
                 f"chmod 600 {creds}" if cmode != 0o600 else "",
             ))
+
+
+# Tools we expect to find baked inside the SIF when --probe-sif is on.
+# Order matches the .def file's manifest. node/python check via -- is
+# different (no --version flag for some shells); claude/codex/opencode/pi
+# all support --version.
+_SIF_PROBED_TOOLS: tuple[str, ...] = (
+    "claude", "codex", "opencode", "pi",
+    "biome", "gitleaks", "node",
+)
+
+
+def _add_cli_source_drift_check(checks: list[tuple[str, str, str]]) -> None:
+    """Detect the uv-tool wheel-cache regression: installed cli.py
+    bytes != src/coding_agents/cli.py bytes.
+
+    On editable installs (`uv tool install --reinstall .` from the repo,
+    or `pip install -e .`) the running file IS the on-disk source, so we
+    short-circuit PASS without an md5 compare.
+
+    On released wheels with no repo on disk, the on-disk source path
+    doesn't exist; skip the row entirely (no false positives outside the
+    dev loop).
+    """
+    import hashlib
+    import inspect
+
+    try:
+        import coding_agents.cli as _cli
+        running_src = inspect.getsourcefile(_cli)
+    except Exception:
+        return
+    if not running_src:
+        return
+    running = Path(running_src).resolve()
+
+    # Repo root: this file lives at src/coding_agents/commands/doctor.py;
+    # repo root is parents[3].
+    here = Path(__file__).resolve()
+    project_root = here.parents[3]
+    on_disk = project_root / "src" / "coding_agents" / "cli.py"
+    if not on_disk.exists():
+        # Released wheel install with no co-located source — nothing to
+        # compare against, don't add a row.
+        return
+
+    src_dir = (project_root / "src").resolve()
+    try:
+        running_inside_src = running.is_relative_to(src_dir)
+    except AttributeError:
+        # Python < 3.9 fallback (we're 3.12+ but be defensive).
+        running_inside_src = str(running).startswith(str(src_dir) + "/")
+
+    if running_inside_src:
+        checks.append((
+            "coding-agents CLI matches source",
+            "pass",
+            "(editable install)",
+        ))
+        return
+
+    try:
+        running_bytes = running.read_bytes()
+        on_disk_bytes = on_disk.read_bytes()
+    except OSError as exc:
+        checks.append((
+            "coding-agents CLI matches source",
+            "warn",
+            f"could not compare: {exc}",
+        ))
+        return
+
+    if hashlib.md5(running_bytes).digest() == hashlib.md5(on_disk_bytes).digest():
+        checks.append((
+            "coding-agents CLI matches source",
+            "pass",
+            "",
+        ))
+    else:
+        checks.append((
+            "coding-agents CLI matches source",
+            "fail",
+            "uv tool install --reinstall .",
+        ))
+
+
+def _add_sif_runtime_probes(
+    checks: list[tuple[str, str, str]], config: dict
+) -> None:
+    """Slow path: actually exec each baked tool inside the SIF.
+
+    The SIF labels (read by row 19 above) are static strings declared
+    at build time in coding_agent_hpc.def %labels — they do not reflect
+    whether the binary actually landed in /usr/local/bin or elsewhere
+    on the SIF's PATH. This probe catches the case where %labels says
+    "yes biome" but the %post npm install step silently failed (or
+    never ran because the SIF wasn't rebuilt).
+    """
+    apptainer = shutil.which("apptainer")
+    if not apptainer:
+        # Probe is a no-op without apptainer; row 17 already surfaces this.
+        return
+    sif_str = config.get("sandbox_sif_path", "")
+    if not sif_str:
+        return
+    sif_path = Path(sif_str).expanduser()
+    if not sif_path.exists():
+        return
+
+    for tool in _SIF_PROBED_TOOLS:
+        ok, version = _probe_sif_binary(apptainer, sif_path, tool)
+        if ok:
+            checks.append((
+                f"SIF runtime: {tool}",
+                "pass",
+                version or "",
+            ))
+        else:
+            checks.append((
+                f"SIF runtime: {tool}",
+                "fail",
+                "binary missing — SIF rebuild needed",
+            ))
+
+
+def _probe_sif_binary(
+    apptainer: str, sif_path: Path, tool: str
+) -> tuple[bool, str]:
+    """Run `apptainer exec SIF <tool> --version`. Returns (ok, version)."""
+    try:
+        result = subprocess.run(
+            [
+                apptainer, "exec",
+                "--containall",
+                "--no-mount", "home",
+                "--writable-tmpfs",
+                str(sif_path), tool, "--version",
+            ],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, ""
+    out = (result.stdout or "").strip().splitlines()
+    err = (result.stderr or "").strip().splitlines()
+    # apptainer prints "FATAL: <tool>: executable file not found" on miss.
+    if any("executable file not found" in line for line in err):
+        return False, ""
+    if result.returncode == 0 and out:
+        return True, out[0][:40]
+    # Some tools print version then exit non-zero (rare); accept any
+    # non-empty stdout as evidence the binary ran.
+    if out:
+        return True, out[0][:40]
+    return False, ""

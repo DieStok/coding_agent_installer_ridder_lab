@@ -75,6 +75,8 @@ bash scripts/hpc_prereq_check.sh
 #    `uv tool install .` puts it in an isolated env and puts `coding-agents`
 #    on your PATH via ~/.local/bin. (If this is your first `uv tool` install,
 #    run `uv tool update-shell` afterwards and open a fresh shell.)
+#    To refresh after a `git pull`, use `uv tool install --reinstall .`
+#    (NOT `--force`) — see the "Refreshing the CLI" section below.
 uv tool install .
 
 # 4. Run the interactive installer
@@ -103,6 +105,32 @@ coding-agents uninstall
 Every subcommand accepts `--dry-run` to walk through the full plan without
 touching anything (implies `--debug`, writes a log under
 `$INSTALL_DIR/logs/`).
+
+### Refreshing the CLI after `git pull`
+
+After pulling source changes for the `coding-agents` Python CLI itself
+(separate from `coding-agents install`, which only refreshes the
+*payload*: wrappers, configs, agent installs), refresh the installed
+uv-tool entrypoint with:
+
+```bash
+uv tool install --reinstall .
+```
+
+**Why `--reinstall` and not `--force`?** uv caches built wheels keyed
+by the project's version string. This package keeps its version pinned
+at `0.1.0` for in-place dev, so `uv tool install --force .` recreates
+the venv but reuses the cached wheel — your source changes never make
+it in. `--reinstall` rebuilds the wheel from source. The doctor row
+"coding-agents CLI matches source" surfaces this drift if you forget
+(it compares the byte content of the installed `cli.py` against the
+on-disk source). Equivalent recovery if you've already done a
+`--force` and want to clear the cache: `uv cache clean coding-agents
+&& uv tool install --force .`.
+
+`coding-agents update` updates the *agents* (Claude Code, Codex,
+OpenCode, Pi) and tools — it does NOT update the `coding-agents` CLI
+itself. That refresh is always `uv tool install --reinstall .`.
 
 ## Subcommands
 

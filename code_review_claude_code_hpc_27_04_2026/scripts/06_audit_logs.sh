@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # 06 — Audit logs. The wrapper appends a JSONL line per agent invocation
-# under ~/agent-logs/<agent>-YYYY-MM-DD.jsonl via `flock` + `jq -n`.
+# under $AGENT_LOGS_DIR/<agent>-YYYY-MM-DD.jsonl via `flock` + `jq -n`.
+#
+# $AGENT_LOGS_DIR is set by the install-time shell rc and typically
+# resolves to <install_dir>/../agent-logs/ — NOT $HOME/agent-logs/.
+# Honor it first, fall back to $HOME/agent-logs only when unset.
 set -u
 
-DIR=$HOME/agent-logs
+DIR="${AGENT_LOGS_DIR:-$HOME/agent-logs}"
 if [ ! -d "$DIR" ]; then
   echo "[06] $DIR does not exist."
   echo "[06] If you ran any agent today, the wrapper should have created it."
+  echo "[06] (Looked at \$AGENT_LOGS_DIR=${AGENT_LOGS_DIR:-<unset>}, fell back to \$HOME/agent-logs)"
   exit 0
 fi
 

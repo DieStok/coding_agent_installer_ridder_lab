@@ -42,6 +42,41 @@
 
 ### What changed for users (non-breaking)
 
+- New `coding-agents doctor --probe-sif` flag — opt-in slow path that
+  runs `apptainer exec SIF <bin> --version` per baked tool, catching
+  the case where `%labels` declared a binary but the `%post` install
+  step failed silently (e.g., biome missing from a stale SIF). Plain
+  `coding-agents doctor` stays snappy and keeps the existing labels
+  read.
+- New always-on doctor row **"coding-agents CLI matches source"** —
+  md5-compares the running uv-tool wheel's `cli.py` against
+  `src/coding_agents/cli.py`. Catches the silent regression where
+  `git pull` lands new code but the user forgot to `uv tool install
+  --reinstall .`. Editable / src installs short-circuit PASS without
+  the compare. Released wheels with no co-located source skip the row
+  entirely.
+- HPC-mode `coding-agents install` now sweeps stale
+  `<install_dir>/tools/node_modules/` on every run — left-over biome
+  from pre-9b87b0b host installs would otherwise shadow the SIF copy
+  on PATH. Local mode is untouched (host node_modules IS the install).
+- `safe_symlink` rejects self-loops loudly (`ValueError`) instead of
+  producing a broken symlink that ELOOPs on every read. Defensive —
+  the 7f7490b fix removed one path that produced this silently; this
+  guard covers all current and future callers.
+- Docs: README gained a **"Refreshing the CLI after `git pull`"**
+  subsection explaining `uv tool install --reinstall .` and why
+  `--force` is a silent no-op for source changes (uv's wheel cache
+  keys on the project version, which stays at `0.1.0` for in-place
+  dev). The doctor "CLI matches source" row surfaces this drift if
+  you forget.
+- Wrapper-template comment refresh: the `--env HOME=$HOME` block now
+  correctly notes that the flag does **not** silence apptainer
+  1.4.5+'s "Overriding HOME" warning — the silencer is the stderr
+  filter from 687b15d. Pure documentation; no behavioral change.
+- Diagnostic scripts in `code_review_claude_code_hpc_27_04_2026/`
+  honor `$AGENT_LOGS_DIR` (the wrapper's actual log path) instead of
+  hardcoding `$HOME/agent-logs/`, and capture the agent's real exit
+  code instead of `head`'s in the cwd-policy probes.
 - Doctor row "Node.js >= 18" relaxed to PASS-with-note when the SIF is
   available — clearly says host node isn't required for the wrapped
   flow.

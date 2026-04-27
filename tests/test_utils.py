@@ -65,6 +65,44 @@ def test_safe_symlink_idempotent_does_not_clobber_source():
         assert target.read_text() == "hello"
 
 
+def test_safe_symlink_rejects_self_loop():
+    """If source.absolute() == target.absolute(), refuse loudly with
+    ValueError instead of producing a self-referential symlink (ELOOP on
+    every subsequent read)."""
+    from coding_agents.utils import safe_symlink
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        same = Path(tmpdir) / "loop.txt"
+        same.write_text("data")
+
+        with pytest.raises(ValueError, match="self-loop"):
+            safe_symlink(same, same)
+
+        # Source untouched.
+        assert same.read_text() == "data"
+        assert not same.is_symlink()
+
+
+def test_safe_symlink_self_loop_guard_uses_absolute():
+    """The guard normalizes both paths to absolute before comparing, so
+    a relative + absolute pair pointing at the same file is also caught."""
+    from coding_agents.utils import safe_symlink
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        absolute = Path(tmpdir).resolve() / "x.txt"
+        absolute.write_text("data")
+        # Construct a non-absolute Path at the same target by chdir'ing
+        # into the tmpdir and using a bare filename.
+        cwd = os.getcwd()
+        try:
+            os.chdir(tmpdir)
+            relative = Path("x.txt")
+            with pytest.raises(ValueError, match="self-loop"):
+                safe_symlink(relative, absolute)
+        finally:
+            os.chdir(cwd)
+
+
 def test_safe_symlink_backs_up_regular_file():
     from coding_agents.utils import safe_symlink
 
