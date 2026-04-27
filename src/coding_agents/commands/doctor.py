@@ -248,13 +248,25 @@ def _add_sandbox_checks(checks: list[tuple[str, str, str]], config: dict) -> Non
     """
     import os
 
-    # Apptainer presence
+    # Apptainer presence — on this cluster apptainer only lives on compute
+    # nodes (not login). Missing-on-login is expected and informational; the
+    # real failure is missing-inside-an-srun.
     apptainer = shutil.which("apptainer")
-    checks.append((
-        "apptainer on PATH",
-        "pass" if apptainer else "warn",
-        "module load apptainer (cluster) or install locally" if not apptainer else "",
-    ))
+    in_slurm_now = "SLURM_JOB_ID" in os.environ
+    if apptainer:
+        checks.append(("apptainer on PATH", "pass", ""))
+    elif in_slurm_now:
+        checks.append((
+            "apptainer on PATH",
+            "fail",
+            "compute node has no apptainer — file a hpcsupport ticket",
+        ))
+    else:
+        checks.append((
+            "apptainer on PATH",
+            "pass",
+            "(only present inside srun/sbatch on this cluster)",
+        ))
 
     # SIF readability
     sif_path = Path(config.get("sandbox_sif_path", "")).expanduser() if config.get("sandbox_sif_path") else None
