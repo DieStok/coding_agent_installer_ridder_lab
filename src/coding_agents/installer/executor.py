@@ -299,9 +299,9 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
             else:
                 raise FileNotFoundError("Claude Code binary not found after install")
 
-        # Install and configure claude-statusbar status line
+        # Install and configure ccstatusline statusline
         if key == "claude":
-            await _install_claude_statusbar(log)
+            await _install_claude_statusbar(log, install_dir=install_dir)
 
     # Post-install actions (e.g., Pi extensions). The agent binary lives at
     # <install_dir>/node_modules/.bin/<binary> after npm install — it isn't
@@ -323,20 +323,44 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
             )
 
 
-async def _install_claude_statusbar(log: RichLog) -> None:
-    """Install claude-statusbar via uv tool, install its deps, and wire up
-    the statusLine entry in ~/.claude/settings.json."""
-    log.write("    Installing claude-statusbar...")
-    try:
-        await _run_in_thread(run, ["uv", "tool", "install", "claude-statusbar"], check=False)
-    except Exception as exc:
-        log.write(f"    [yellow]uv tool install claude-statusbar: {exc}[/yellow]")
-        return
+_CCSTATUSLINE_VERSION = "2.2.10"
 
+
+async def _install_claude_statusbar(log: RichLog, *, install_dir: Path) -> None:
+    """Install ccstatusline + wire the statusLine entry in ~/.claude/settings.json.
+
+    ccstatusline (https://github.com/sirmalloc/ccstatusline, ~3 MB, MIT) is a
+    zero-config Claude Code statusline written in TypeScript. When invoked
+    non-interactively (i.e. by Claude Code's statusLine.command), it prints
+    the statusline to stdout and exits. When invoked interactively from a
+    shell, the same `ccstatusline` binary opens a TUI for customisation.
+
+    Replaces the prior `claude-statusbar` (`cs --hide-pet`) flow, which had
+    a latent bug in HPC mode: `uv tool install claude-statusbar` installed
+    `cs` to the *host* (e.g. ~/.local/bin/cs), but Claude runs inside the
+    SIF, where `--no-mount home` makes the host PATH invisible — so the
+    statusLine.command was a silent no-op under SLURM. ccstatusline is
+    baked into the SIF (bundled/sif/package.json) so the in-SIF binary at
+    /opt/agents/node_modules/.bin/ccstatusline resolves cleanly.
+
+    For local mode (and as a host-side fallback for HPC users on a stale
+    SIF that hasn't been rebuilt with ccstatusline yet), we additionally
+    npm-install ccstatusline into <install_dir>/node_modules so the
+    install_dir's node_modules/.bin/ — already on PATH via the shell-rc
+    injection — resolves bare `ccstatusline` too.
+    """
+    log.write(f"    Installing ccstatusline@{_CCSTATUSLINE_VERSION}...")
     try:
-        await _run_in_thread(run, ["cs", "--install-deps"], check=False)
-    except Exception as exc:
-        log.write(f"    [yellow]cs --install-deps: {exc}[/yellow]")
+        await _run_in_thread(npm_install, install_dir, f"ccstatusline@{_CCSTATUSLINE_VERSION}")
+        log.write(f"    [green]✓[/green] ccstatusline@{_CCSTATUSLINE_VERSION} installed under {install_dir}/node_modules")
+    except (subprocess.CalledProcessError, OSError, FileNotFoundError) as exc:
+        # Non-fatal: in HPC mode the in-SIF copy still works. Just warn.
+        log.write(
+            f"    [yellow]npm install ccstatusline failed ({exc}); "
+            f"statusline still configured (HPC mode falls back to the in-SIF copy at "
+            f"/opt/agents/node_modules/.bin/ccstatusline; local mode users will need "
+            f"the package on PATH manually).[/yellow]"
+        )
 
     settings_path = Path.home() / ".claude" / "settings.json"
     dry_run_mkdir(settings_path.parent)
@@ -347,11 +371,22 @@ async def _install_claude_statusbar(log: RichLog) -> None:
         except (json.JSONDecodeError, OSError):
             existing = {}
 
-    existing["statusLine"] = {"type": "command", "command": "cs --hide-pet"}
+    existing["statusLine"] = {
+        "type": "command",
+        "command": "ccstatusline",
+        "padding": 0,
+        "refreshInterval": 10,
+    }
 
     from coding_agents.utils import secure_write_text
     secure_write_text(settings_path, json.dumps(existing, indent=2) + "\n")
     log.write(f"    [green]✓[/green] statusLine configured in {settings_path}")
+    log.write(
+        "    [dim]ccstatusline has zero-config defaults that work out of the box. "
+        "Customise interactively by running `ccstatusline` in a terminal — "
+        "it auto-detects whether to print (non-TTY, called by Claude) or "
+        "open the TUI (TTY, called by you).[/dim]"
+    )
 
 
 async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> None:
