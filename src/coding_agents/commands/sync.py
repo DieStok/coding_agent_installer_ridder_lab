@@ -18,8 +18,12 @@ from coding_agents.utils import safe_symlink
 console = Console()
 
 
-def run_sync() -> None:
-    """Re-distribute all shared config to agent-native locations."""
+def run_sync(vscode_settings_path: str | None = None) -> None:
+    """Re-distribute all shared config to agent-native locations.
+
+    ``vscode_settings_path`` overrides the resolver chain when the user's
+    VSCode-server lives at a non-standard remote.SSH.serverInstallPath.
+    """
     config = load_config()
     if not config.get("install_dir"):
         console.print("[red]No installation found. Run `coding-agents install` first.[/red]")
@@ -39,21 +43,30 @@ def run_sync() -> None:
     _sync_deny_rules(install_dir, agents)
     _sync_mcp(install_dir, agents)
     if mode != "local":
-        _sync_vscode_wrapper_settings(install_dir, agents)
+        _sync_vscode_wrapper_settings(install_dir, agents, vscode_settings_path)
 
     console.print("\n[green bold]Sync complete.[/green bold]")
 
 
-def _sync_vscode_wrapper_settings(install_dir: Path, agents: list[str]) -> None:
+def _sync_vscode_wrapper_settings(
+    install_dir: Path,
+    agents: list[str],
+    explicit_path: str | None = None,
+) -> None:
     """Re-emit wrapper hooks into VSCode settings.json.
 
     VSCode rewrites settings.json on certain UI actions; a periodic re-emit
     via ``coding-agents sync`` keeps our wrapper keys present afterwards.
     Idempotent — byte-identical output when nothing has drifted.
 
-    If no settings.json exists locally (typical when VSCode Settings Sync is
-    on — the file is held in cloud sync, not on the cluster), print the
-    exact JSONC the user can paste manually.
+    Resolution order for the target file:
+      1. ``explicit_path`` (--vscode-settings) — robust override.
+      2. ``$VSCODE_AGENT_FOLDER/data/User/settings.json``.
+      3. Standard chain: ~/.cursor-server/, ~/.vscode-server/, etc.
+
+    If none of the above match, print the JSONC block to paste manually
+    (the user is most likely on a custom remote.SSH.serverInstallPath, OR
+    has VSCode Settings Sync hiding the file from the cluster filesystem).
     """
     wrappable = {"claude", "codex", "opencode", "pi"}
     selected = sorted(set(agents) & wrappable)
@@ -64,29 +77,37 @@ def _sync_vscode_wrapper_settings(install_dir: Path, agents: list[str]) -> None:
         _vscode_wrapper_keys,
         emit_managed_vscode_settings,
     )
-    target = emit_managed_vscode_settings(install_dir, selected)
+    target_arg = Path(explicit_path).expanduser() if explicit_path else None
+    target = emit_managed_vscode_settings(
+        install_dir, selected, target_settings_path=target_arg
+    )
     if target is not None:
         console.print(f"  [green]✓[/green] re-emitted to {target}")
         return
 
-    # No settings.json on disk → most often Settings Sync is on. Print the
-    # block to paste manually.
     console.print(
-        "  [yellow]⚠ No VSCode settings.json found on this host.[/yellow]\n"
-        "    [dim]Likely cause: VSCode Settings Sync is enabled, so the file "
-        "lives in cloud sync rather than ~/.vscode-server/. Open the Command "
-        "Palette → 'Preferences: Open User Settings (JSON)' and paste the "
-        "block below at the top level of the JSON object:[/dim]"
+        "  [yellow]⚠ No VSCode settings.json found on this host.[/yellow]"
+    )
+    console.print(
+        "    [dim]Two common causes:[/dim]\n"
+        "    [dim]1. Custom remote.SSH.serverInstallPath — VSCode-server "
+        "lives outside ~/.vscode-server/. Locate it and re-run with[/dim]\n"
+        "       [bold]coding-agents sync --vscode-settings "
+        "/path/to/data/User/settings.json[/bold]\n"
+        "       [dim](or set $VSCODE_AGENT_FOLDER to the dir whose "
+        "data/User/settings.json should be used).[/dim]\n"
+        "    [dim]2. VSCode Settings Sync is enabled — settings.json lives "
+        "in cloud sync rather than on the cluster. Open the Command Palette "
+        "→ 'Preferences: Open User Settings (JSON)' and paste the block "
+        "below at the top level of the JSON object:[/dim]"
     )
     keys = _vscode_wrapper_keys(install_dir, selected)
     snippet = json.dumps(keys, indent=2)
-    # Indent each line for visual separation in the terminal output.
     indented = "\n".join("    " + line for line in snippet.splitlines())
     console.print(f"\n[bold cyan]{indented}[/bold cyan]\n")
     console.print(
-        "    [dim]After pasting + saving, the four sidebars (Claude, Codex, "
-        "OpenCode, Pi) will route through the SIF wrapper. Re-run "
-        "`coding-agents sync` to verify the keys persisted.[/dim]"
+        "    [dim]After pasting + saving, the four sidebars route through "
+        "the SIF wrapper. Re-run `coding-agents sync` to verify.[/dim]"
     )
 
 

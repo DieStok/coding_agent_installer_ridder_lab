@@ -137,11 +137,23 @@ def update() -> None:
 
 
 @app.command()
-def sync() -> None:
+def sync(
+    vscode_settings: str = typer.Option(
+        "",
+        "--vscode-settings",
+        help=(
+            "Explicit path to your VSCode/Cursor user settings.json. Use "
+            "this when remote.SSH.serverInstallPath puts your VSCode-server "
+            "outside the standard ~/.vscode-server/ location. Alternatively "
+            "set $VSCODE_AGENT_FOLDER to the dir whose data/User/settings.json "
+            "should be used."
+        ),
+    ),
+) -> None:
     """Re-distribute shared config to all agent-native locations."""
     from coding_agents.commands.sync import run_sync
 
-    run_sync()
+    run_sync(vscode_settings_path=vscode_settings or None)
 
 
 @app.command()
