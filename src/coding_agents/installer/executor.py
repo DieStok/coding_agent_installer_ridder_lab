@@ -907,6 +907,21 @@ async def _emit_managed_policy(state, bundled: Path, log: RichLog) -> None:
             target = home / ".claude" / "settings.json"
             install_managed_claude_settings(template_path, deny_rules_path, target)
             log.write(f"  [green]✓[/green] Claude managed settings: {target}")
+            # Sprint 1 Task 1.8: surface the user-overridable caveat at
+            # install time so users aren't surprised when a project-local
+            # .claude/settings.json silently overrides our deny rules.
+            # True org-managed enforcement requires
+            # /etc/claude-code/managed-settings.json (hpcsupport ticket
+            # tracked in docs/v2-deferred.md item D5).
+            true_managed = Path("/etc/claude-code/managed-settings.json")
+            if not true_managed.exists():
+                log.write(
+                    "    [yellow]ℹ Note: ~/.claude/settings.json is user-overridable. "
+                    "A repo-local .claude/settings.json silently overrides the deny rules emitted "
+                    "above. True org-managed enforcement (uneditable from user space) requires the "
+                    "lab admin to install /etc/claude-code/managed-settings.json — open a "
+                    "hpcsupport ticket if you need that level of lockdown.[/yellow]"
+                )
         else:
             log.write("  [yellow]⚠ Claude template or deny_rules missing; skipping[/yellow]")
 
@@ -914,4 +929,4 @@ async def _emit_managed_policy(state, bundled: Path, log: RichLog) -> None:
         if deny_rules_path.exists():
             target = home / ".codex" / "config.toml"
             install_codex_deny_paths(deny_rules_path, target)
-            log.write(f"  [green]✓[/green] Codex deny paths: {target}")
+            log.write(f"  [green]✓[/green] Codex sandbox config: {target}")

@@ -1,5 +1,6 @@
 {
-  "_comment": "Default Claude Code settings emitted by coding-agents installer. NOTE: this lives at ~/.claude/settings.json, which is user-overridable. For TRUE managed enforcement (cannot be overridden), v2 will write to /etc/claude-code/managed-settings.json (requires hpcsupport / root). See docs/v2-deferred.md item D5.",
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Default Claude Code settings emitted by coding-agents installer. NOTE: this lives at ~/.claude/settings.json, which is user-overridable. For TRUE managed enforcement (cannot be overridden), v2 will write to /etc/claude-code/managed-settings.json (requires hpcsupport / root). See docs/v2-deferred.md item D5. Sprint 1 Task 1.8 added the $schema ref so the user's editor can validate; disableBypassPermissionsMode kept as the string \"disable\" pending verification against https://json.schemastore.org/claude-code-settings.json — if that schema later requires a boolean, update both this template and tests/test_policy_emit.py::test_managed_settings_template_has_correct_nesting in lockstep.",
   "allowManagedMcpServersOnly": true,
   "permissions": {
     "disableBypassPermissionsMode": "disable",

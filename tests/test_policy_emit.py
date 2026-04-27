@@ -98,6 +98,20 @@ def test_managed_settings_template_has_correct_nesting():
     assert data["sandbox"]["failIfUnavailable"] is True
 
 
+def test_managed_settings_template_carries_schema_ref():
+    """Sprint 1 Task 1.8 / synthesis §3.8: the template references the
+    JSON Schema so the user's editor can validate the file. If the
+    schema later requires disableBypassPermissionsMode to be boolean
+    (true) instead of the string "disable", the lockstep update is to
+    change both the template value and the assertion above."""
+    template_path = Path(__file__).resolve().parent.parent / "src" / "coding_agents" / "bundled" / "templates" / "managed-claude-settings.json"
+    data = json.loads(template_path.read_text())
+    assert data.get("$schema") == "https://json.schemastore.org/claude-code-settings.json", (
+        "managed-claude-settings.json should carry $schema for editor "
+        "validation (Sprint 1 Task 1.8)."
+    )
+
+
 def test_deny_rules_covers_security_critical_paths():
     """Expanded deny list (security-sentinel) — must cover the home-dir
     secrets that the cwd-only sandbox doesn't bind anyway, as defence-
