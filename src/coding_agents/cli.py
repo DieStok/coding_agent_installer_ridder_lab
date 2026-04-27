@@ -137,11 +137,30 @@ def sync() -> None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    scan_cron: bool = typer.Option(
+        False,
+        "--scan-cron",
+        help="Scan the user's crontab for bare CLI invocations (claude/codex/...)."
+    ),
+    scan_systemd: bool = typer.Option(
+        False,
+        "--scan-systemd",
+        help="Scan systemd-user units for bare CLI invocations.",
+    ),
+) -> None:
     """Health check with color-coded pass/warn/fail and fix commands."""
     from coding_agents.commands.doctor import run_doctor
 
-    raise typer.Exit(run_doctor())
+    raise typer.Exit(run_doctor(scan_cron=scan_cron, scan_systemd=scan_systemd))
+
+
+@app.command(name="vscode-reset")
+def vscode_reset() -> None:
+    """Clear the cached VSCode SLURM session jobid (best-effort scancel)."""
+    from coding_agents.commands.vscode_reset import run_vscode_reset
+
+    raise typer.Exit(run_vscode_reset())
 
 
 @app.command(name="project-init")

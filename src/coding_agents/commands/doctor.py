@@ -18,7 +18,7 @@ from coding_agents.config import load_config, get_install_dir
 console = Console()
 
 
-def run_doctor() -> int:
+def run_doctor(*, scan_cron: bool = False, scan_systemd: bool = False) -> int:
     """Run all health checks. Returns 0 if all pass, 1 if any fail."""
     config = load_config()
     if not config.get("install_dir"):
@@ -36,6 +36,13 @@ def run_doctor() -> int:
     table.add_column("Fix", min_width=30)
 
     checks = _gather_checks(install_dir, agents, config)
+    checks.extend(_gather_vscode_checks(install_dir, config, agents))
+    if scan_cron:
+        from coding_agents.commands.doctor_vscode import scan_crontab
+        checks.extend(scan_crontab())
+    if scan_systemd:
+        from coding_agents.commands.doctor_vscode import scan_systemd_units
+        checks.extend(scan_systemd_units())
     has_fail = False
 
     for i, (name, status, fix) in enumerate(checks, 1):
@@ -187,6 +194,35 @@ def _gather_checks(
             ))
 
     return checks
+
+
+def _gather_vscode_checks(
+    install_dir: Path, config: dict, agents: list[str]
+) -> list[tuple[str, str, str]]:
+    """Append the VSCode-extension wrapping checks (Phase 3+5)."""
+    from coding_agents.commands.doctor_vscode import (
+        codex_version_drift_check,
+        no_wrap_acknowledgement,
+        opencode_path_shim_check,
+    )
+
+    rows: list[tuple[str, str, str]] = []
+
+    if "codex" in agents:
+        sif_str = config.get("sandbox_sif_path", "")
+        sif_path = Path(sif_str).expanduser() if sif_str else None
+        drift = codex_version_drift_check(sif_path)
+        if drift is not None:
+            rows.append(drift)
+
+    if "opencode" in agents:
+        rows.append(opencode_path_shim_check(install_dir))
+
+    ack = no_wrap_acknowledgement()
+    if ack is not None:
+        rows.append(ack)
+
+    return rows
 
 
 def _check_node() -> tuple[bool, str]:
