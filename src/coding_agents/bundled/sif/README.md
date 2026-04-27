@@ -57,6 +57,20 @@ docker run --rm --privileged --platform linux/amd64 \
 ```
 *Spawns the SIF and runs `claude --version` inside it. Exit 0 + a version string proves the npm install + binary symlink worked end-to-end.*
 
+### 4b. Verify Pi defaults baked in (no-wrap-via-sif plan, phase 2b)
+```bash
+docker run --rm --privileged --platform linux/amd64 \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/apptainer/apptainer:1.4.5 \
+  apptainer exec coding_agent_hpc.sif test -r /opt/pi-default-settings.json && echo "✓ pi defaults present"
+
+docker run --rm --privileged --platform linux/amd64 \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/apptainer/apptainer:1.4.5 \
+  apptainer exec coding_agent_hpc.sif cat /opt/pi-default-settings.json
+```
+*The `%post` block runs `pi install npm:pi-ask-user` (and three more) inside the build, then snapshots `/root/.pi/agent/settings.json` to `/opt/pi-default-settings.json`. The wrapper template's first-run hook copies this file to each user's `~/.pi/agent/settings.json` on their very first wrapped Pi message — so fresh users get the four lab-default extensions automatically. If this step is missing, `coding-agents doctor` warns ("Pi defaults baked in SIF") on the cluster after upload.*
+
 ### 5. Compute SHA sidecar
 ```bash
 shasum -a 256 coding_agent_hpc.sif | awk '{print $1}' > coding_agent_hpc.sif.sha256

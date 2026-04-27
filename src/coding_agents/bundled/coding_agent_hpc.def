@@ -69,6 +69,19 @@ From: ubuntu:24.04
       ln -sf "/opt/agents/node_modules/.bin/$bin" "/usr/local/bin/$bin"
     done
 
+    # Pi default extensions (no-wrap-via-sif plan, phase 2b).
+    # Bake the four lab-default Pi extensions into the SIF's global npm
+    # root so each user's first wrapped Pi message inherits them via the
+    # wrapper template's first-run hook (which copies the snapshot below
+    # to ~/.pi/agent/settings.json on the host).
+    export HOME=/root
+    pi install npm:pi-ask-user
+    pi install npm:pi-subagents
+    pi install npm:pi-web-access
+    pi install npm:pi-mcp-adapter
+    install -d -m 0755 /opt
+    install -m 0644 /root/.pi/agent/settings.json /opt/pi-default-settings.json
+
     # agentuser with empty $HOME. UID is unpinned because:
     #  - Ubuntu 24.04 ships with `ubuntu` already at UID 1000.
     #  - Apptainer in unprivileged mode (--no-privs) runs the container

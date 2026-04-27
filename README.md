@@ -144,6 +144,22 @@ extensions' "spawn" hooks into our SIF wrapper:
 - Run `coding-agents vscode-reset` if a session goes wrong (e.g. after
   VSCode restart while a salloc was retrying); next spawn re-allocates fresh.
 
+## Building the SIF (lab admin)
+
+The Apptainer SIF that the wrappers route through is built from
+[`src/coding_agents/bundled/coding_agent_hpc.def`](src/coding_agents/bundled/coding_agent_hpc.def).
+The full build runbook (Mac/Linux/WSL via Docker, smoke tests, SHA
+sidecar, atomic-swap of `current.sif` on the cluster) lives at
+[`src/coding_agents/bundled/sif/README.md`](src/coding_agents/bundled/sif/README.md).
+
+The `%post` step bakes Node 20 + Codex/OpenCode/Pi/Claude + the four
+lab-default Pi extensions (`pi-ask-user`, `pi-subagents`,
+`pi-web-access`, `pi-mcp-adapter`) and snapshots
+`/opt/pi-default-settings.json` so the wrapper template's first-run
+hook can seed each user's `~/.pi/agent/settings.json` on their first
+wrapped Pi message. After upload, `coding-agents doctor` verifies the
+SIF labels + the Pi defaults file with two cheap probes.
+
 ## Sandboxing reference
 
 Wondering when the Apptainer sandbox actually applies and when it doesn't? See

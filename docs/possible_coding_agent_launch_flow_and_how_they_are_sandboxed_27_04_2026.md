@@ -1,6 +1,6 @@
 # Coding-agent launch flows and sandbox coverage
 
-**Date:** 2026-04-27
+**Date:** 2026-04-27 (last updated for the no-wrap-via-sif refactor)
 **Status:** authoritative reference for operators + users
 **Scope:** every plausible way to start a coding agent CLI (Claude, Codex, OpenCode, Pi) on a HPC cluster + VSCode workflow, and what sandboxing each path receives.
 
@@ -34,6 +34,11 @@ Did you type `agent-claude` / `agent-codex` / `agent-opencode` / `agent-pi`?
 
 Did you `sbatch` a script that calls one of these agents?
   YES → Sandboxed; the job's own SLURM_JOB_ID is reused (no double allocation).
+
+Did you set CODING_AGENTS_NO_WRAP=1?
+  YES → SIF + deny rules + --containall isolation still apply (the env var
+        only bypasses the lab wrapper template's preconditions). Triage-only
+        path; technical-staff use only — see §23.
 ```
 
 ## Overview table
@@ -64,6 +69,7 @@ Legend: ✅ = caught and sandboxed; ⚠ = caught conditionally (caveat in notes)
 | 20 | Local-app-launched VSCode, local workspace, no SSH | App launcher | none (`coding-agents install --local`) | n/a | n/a | HPC sandbox doesn't apply; out of scope. §20. |
 | 21 | **Cron job** running an agent | crond | none (cron shell ≠ login shell) | ❌ | n/a | **GAP.** Workaround in §21. |
 | 22 | **Systemd-user unit** running an agent | systemctl | none (no .bashrc) | ❌ | n/a | **GAP.** Workaround in §22. |
+| 23 | **`CODING_AGENTS_NO_WRAP=1`** (technical staff only) | env var override | bypasses wrapper template; goes through SIF | ⚠ | ~5–15s cold (apptainer exec direct) | **Triage-only path.** Use only when technical staff explicitly asks; SIF deny rules + `--containall` still apply, but the audit log, lab cwd policy, and per-agent bind tables are skipped. §23. |
 
 ---
 
@@ -322,11 +328,13 @@ python script.py
 
 ### §18 — `coding-agents doctor` / `sync` exec'ing CLIs
 
-**Internal flow.** Our own `coding-agents` Python invokes `<install_dir>/node_modules/.bin/<n>` via absolute path to query versions, run health checks, etc. We deliberately bypass our own wrapper to:
-1. Avoid recursive wrapping (auto-srun firing inside `coding-agents doctor`).
-2. Be able to verify the unwrapped binary (e.g., "does the npm install actually work?").
+**Internal flow.** Our own `coding-agents` Python doesn't exec the agent binaries at all anymore. After the no-wrap-via-sif refactor (plan: `docs/plans/2026-04-27-003-...`):
 
-**No sandboxing applied.** This is intentional. Documented as an internal convention; doctor invocations are short, query-only, and admin-trusted.
+- `doctor` checks each agent by verifying that the **wrapper** at `<install_dir>/bin/agent-<key>` exists AND that the configured SIF is readable. No binary exec required.
+- `doctor`'s SIF-level probes (Codex protocol drift, Pi defaults baked) call `apptainer exec <sif> <agent> --version` or `apptainer exec <sif> test -r /opt/...` — through the SIF, with `--containall`. Short query-only invocations on a compute node.
+- `sync` doesn't exec any agent binary; it only emits config files (Codex hooks, OpenCode permissions, VSCode wrapper settings).
+
+**Sandboxing applied for the SIF probes.** All apptainer-exec calls go through the SIF. No host binary is exec'd by `coding-agents doctor` / `sync` anywhere.
 
 ---
 
@@ -400,6 +408,67 @@ ExecStart=/hpc/compgen/users/%u/coding_agents/bin/agent-claude --watch /tmp/queu
 Or, better: use a `ExecStartPre` that allocates a SLURM job and launch the agent inside the allocation.
 
 **Mitigation.** `coding-agents doctor` should `systemctl --user list-unit-files` and warn on bare CLI invocations.
+
+---
+
+### §23 — `CODING_AGENTS_NO_WRAP=1` (technical staff triage path)
+
+> **⚠️ Do not use this path unless lab technical staff explicitly asks
+> you to.** It exists for one purpose only: isolating wrapper-template
+> bugs from agent-level bugs during triage. It is **not** a way to
+> "make the agent run faster" or "skip prompts" or "use my host
+> credentials" — there is no legitimate user-facing reason to set it.
+> Doctor surfaces a warn row when the variable is in the environment.
+
+**What it bypasses, what it preserves.**
+
+| Skipped (wrapper template's job) | Preserved (SIF + apptainer's job) |
+|---|---|
+| SLURM auto-srun + jobid cache + flock | The SIF itself (deny rules, `--containall`, `--no-mount home,tmp`) |
+| Lab cwd-policy refusal | Apptainer's bind-mount discipline + `--no-privs` |
+| Audit-log JSONL emission | Version pinning (codex/opencode/pi/claude all SIF-baked) |
+| Per-agent lab bind tables (`~/.cache`, `/etc/ssl/certs`, …) | Cwd + agent's config dir (rw) — minimal binds |
+| Pre-existing `APPTAINER_BIND` merge | The SIF's baked-in deny rules and isolation |
+
+**Process tree.**
+```
+extension-host (or shell)
+  └── agent-<n>-vscode (3-line bash stub)
+        └── agent-vscode --agent <n> -- ARGV
+              └── (NO_WRAP=1 detected → BYPASS the wrapper template)
+                  apptainer exec --containall --no-mount home,tmp \
+                    --writable-tmpfs --no-privs \
+                    --bind <cwd>:<cwd>:rw \
+                    --bind <agent_config_dir>:<agent_config_dir>:rw \
+                    <sif> <agent> ARGV
+```
+
+**Sandboxing applied.** SIF-level only. The agent runs **inside** the
+SIF, so deny rules + `--containall` isolation still apply, but the
+wrapper template's *additional* protections (lab cwd refusal, audit
+log, full bind-mount table, SLURM accounting) are skipped.
+
+**Requires `apptainer` on PATH.** On the lab cluster apptainer is
+compute-only — NO_WRAP=1 must run inside an `srun --pty` shell. On a
+login node it exits non-zero with a clear `apptainer not on PATH`
+error and a hint to switch to a compute-node session.
+
+**When technical staff might ask you to use it.** Triage scenarios
+like:
+- *"Is the wrapper template's cwd policy refusing your invocation?"*
+  Set NO_WRAP=1; if the agent now runs, the policy is the culprit.
+- *"Is the audit-log JSONL emission breaking on a corrupted file?"*
+  Same idea.
+- *"Is one of the lab bind-mounts failing?"* Same idea.
+
+If technical staff hasn't asked: **don't use this.** The wrapper
+template's protections exist for good reasons (audit, accounting,
+deny-rule discipline) and the wrapped flow is only ~200 ms slower
+than NO_WRAP for the warm-cache case.
+
+**How to clean up after a triage session.** Just `unset
+CODING_AGENTS_NO_WRAP` in your shell, and the doctor warn row goes
+away. No persistent state on disk.
 
 ---
 
