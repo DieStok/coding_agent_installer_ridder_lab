@@ -52,3 +52,6 @@ coding_agent_hpc.sif.sha256
 
 # Project-local skills (cloned reference material — keep out of repo)
 .claude/skills/
+
+# Claude Code per-project state (scheduled-task locks, etc.)
+.claude/
