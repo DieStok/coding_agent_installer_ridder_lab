@@ -73,13 +73,33 @@ def _gather_checks(
         "(system dependency)" if not py else "",
     ))
 
-    # 2. Node.js >= 18
+    # 2. Node.js >= 18 — only required at install/update time (npm_install)
+    # and for the CODING_AGENTS_NO_WRAP=1 escape hatch. The wrapped sidebar /
+    # terminal flow uses the SIF's baked-in node, so a missing host node on
+    # a compute or login shell is informational (PASS with note) when the
+    # SIF is available, and FAIL only when neither path can run.
     node_ok, node_ver = _check_node()
-    checks.append((
-        f"Node.js >= 18 ({node_ver})" if node_ver else "Node.js >= 18",
-        "pass" if node_ok else "fail",
-        "(system dependency)" if not node_ok else "",
-    ))
+    if node_ok:
+        checks.append((
+            f"Node.js >= 18 ({node_ver})",
+            "pass",
+            "",
+        ))
+    elif _sif_can_run_node(config):
+        checks.append((
+            "Node.js >= 18",
+            "pass",
+            "(host node missing — agents use the SIF's bundled node; "
+            "only needed for `coding-agents install/update` or the "
+            "CODING_AGENTS_NO_WRAP=1 escape hatch)",
+        ))
+    else:
+        checks.append((
+            "Node.js >= 18",
+            "fail",
+            "(system dependency for install + escape hatch; "
+            "activate a node>=18 conda env or install nvm)",
+        ))
 
     # 3. uv available
     uv = shutil.which("uv")
@@ -223,6 +243,43 @@ def _gather_vscode_checks(
         rows.append(ack)
 
     return rows
+
+
+def _sif_can_run_node(config: dict) -> bool:
+    """Best-effort: does the SIF claim to ship its own node?
+
+    Reads the SIF's apptainer-inspect labels (already populated by the
+    sandbox-checks pass below) — specifically ``coding-agents.versions.node``.
+    We don't actually exec the SIF here (slow, would require an srun
+    allocation on this cluster). If apptainer is unavailable on the current
+    shell (e.g. login node), we still trust the configured SIF path's
+    presence as enough signal — the wrapper flow always runs on a compute
+    node, where apptainer + node-in-SIF will be available together.
+    """
+    sif_str = config.get("sandbox_sif_path", "")
+    if not sif_str:
+        return False
+    sif_path = Path(sif_str).expanduser()
+    if not sif_path.exists():
+        return False
+    apptainer = shutil.which("apptainer")
+    if not apptainer:
+        # apptainer is compute-only on this cluster; presence of a readable
+        # SIF on a login shell is enough — the runtime path will work.
+        return True
+    try:
+        result = subprocess.run(
+            [apptainer, "inspect", "--json", str(sif_path)],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True  # assume yes; soft check, not load-bearing
+    try:
+        data = json.loads(result.stdout) if result.returncode == 0 else {}
+    except json.JSONDecodeError:
+        return True
+    labels = data.get("data", {}).get("attributes", {}).get("labels", {}) or {}
+    return any(k.endswith(".node") for k in labels)
 
 
 def _check_node() -> tuple[bool, str]:
