@@ -83,6 +83,54 @@ def test_render_is_byte_identical_on_repeat():
     assert a == b
 
 
+@pytest.mark.parametrize("agent_key,binary", [
+    ("claude", "claude"),
+    ("codex", "codex"),
+    ("opencode", "opencode"),
+    ("pi", "pi"),
+])
+def test_pi_first_run_hook_present_only_for_pi(agent_key, binary):
+    """The first-run pi-defaults block runs only when AGENT_NAME=pi.
+
+    Other agents see the same conditional but their AGENT_NAME doesn't match,
+    so the bash branch is dead code for them — equivalent to absent.
+    """
+    text = load_template()
+    rendered = render_wrapper(
+        text,
+        agent_key=agent_key,
+        agent_display_name=f"Test-{agent_key}",
+        agent_binary=binary,
+        default_sif_path="/some/path/current.sif",
+    )
+    # The block always renders (we don't conditionalise the template at
+    # render time — the bash if-condition does the gating). Assert the
+    # marker is present and references pi-default-settings.json.
+    assert "Pi first-run defaults" in rendered
+    assert "pi-default-settings.json" in rendered
+    assert '$HOME/.pi/agent/settings.json' in rendered
+    # The condition uses AGENT_NAME, so it only fires when AGENT_NAME=pi.
+    assert '[ "$AGENT_NAME" = "pi" ]' in rendered
+
+
+def test_pi_first_run_hook_is_best_effort():
+    """The hook must end with `|| true` so a missing /opt/pi-default-settings.json
+    in the SIF never blocks the actual agent invocation."""
+    text = load_template()
+    rendered = render_wrapper(
+        text,
+        agent_key="pi",
+        agent_display_name="Pi",
+        agent_binary="pi",
+        default_sif_path="/x/current.sif",
+    )
+    # Find the block and confirm `|| true` is in there.
+    block_start = rendered.index("Pi first-run defaults")
+    block_end = rendered.index("# --- Exec ---", block_start)
+    block = rendered[block_start:block_end]
+    assert "|| true" in block
+
+
 def test_render_rejects_missing_var():
     """Renderer guards: refuse if WRAPPER_VARS gains a value with no source."""
     # We can only verify by mutating WRAPPER_VARS via inspection — instead,

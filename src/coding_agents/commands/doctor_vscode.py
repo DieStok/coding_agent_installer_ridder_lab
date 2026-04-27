@@ -214,6 +214,42 @@ def no_wrap_acknowledgement() -> CheckRow | None:
         return (
             "CODING_AGENTS_NO_WRAP set",
             "warn",
-            "wrapping bypassed — coding agents will run unsandboxed",
+            "wrapper bypassed (still inside SIF — see docs/vscode_integration.md)",
         )
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Pi default-settings reachable in the SIF (no-wrap-via-sif plan, phase 2b)
+# --------------------------------------------------------------------------- #
+
+def pi_default_settings_in_sif_check(sif_path: Path | None) -> CheckRow | None:
+    """Verify the SIF carries /opt/pi-default-settings.json.
+
+    The wrapper template's first-run hook (Phase 2b) copies this file into
+    each user's ~/.pi/agent/settings.json on their first Pi invocation. If
+    the lab admin forgot to bake the file into the SIF, fresh users will
+    open Pi with no extensions wired up — agent works but lab defaults
+    are missing.
+
+    Returns ``None`` when no SIF is configured or apptainer is unavailable
+    (login-node case — soft check, not load-bearing).
+    """
+    if sif_path is None or not sif_path.exists():
+        return None
+    apptainer = "apptainer"
+    try:
+        result = subprocess.run(
+            [apptainer, "exec", str(sif_path),
+             "test", "-r", "/opt/pi-default-settings.json"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None  # apptainer missing or hung — defer to other rows
+    if result.returncode == 0:
+        return ("Pi defaults baked in SIF", "pass", "/opt/pi-default-settings.json")
+    return (
+        "Pi defaults baked in SIF",
+        "warn",
+        "/opt/pi-default-settings.json missing — fresh users get empty Pi (lab admin: rebuild SIF with `pi install npm:pi-ask-user` etc.)",
+    )

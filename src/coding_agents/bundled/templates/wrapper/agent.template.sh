@@ -480,6 +480,23 @@ if [ -n "${AGENT_LOGS_DIR:-}" ] && [ -w "$AGENT_LOGS_DIR" ]; then
     || echo "agent-${AGENT_NAME}: warning: failed to append audit log to $AGENT_LOGS_DIR" >&2
 fi
 
+# --- Pi first-run defaults (no-wrap-via-sif plan, phase 2b) ---
+# Pi extensions are baked into the SIF at build time; the user's
+# ~/.pi/agent/settings.json must reference them by `npm:` source. On a
+# fresh user (no settings file yet) we copy the SIF-baked default
+# settings into ~/.pi/agent/ so the four lab default extensions
+# (pi-ask-user, pi-subagents, pi-web-access, pi-mcp-adapter) are wired
+# up on the very first message. Best-effort — never blocks the agent.
+if [ "$AGENT_NAME" = "pi" ] && [ ! -f "$HOME/.pi/agent/settings.json" ]; then
+  mkdir -p "$HOME/.pi/agent"
+  apptainer exec \
+    --containall \
+    --bind "$HOME/.pi/agent:$HOME/.pi/agent:rw" \
+    "$SIF_RESOLVED" \
+    sh -c 'test -r /opt/pi-default-settings.json && cp /opt/pi-default-settings.json "$HOME/.pi/agent/settings.json"' \
+    2>/dev/null || true
+fi
+
 # --- Exec ---
 exec apptainer exec \
   --containall \

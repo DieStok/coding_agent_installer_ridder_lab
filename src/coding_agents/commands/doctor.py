@@ -89,16 +89,16 @@ def _gather_checks(
         checks.append((
             "Node.js >= 18",
             "pass",
-            "(host node missing — agents use the SIF's bundled node; "
-            "only needed for `coding-agents install/update` or the "
-            "CODING_AGENTS_NO_WRAP=1 escape hatch)",
+            "(host node not required for the wrapped flow — agents + "
+            "NO_WRAP=1 both run inside the SIF; only needed for `--local` "
+            "mode, claude curl install, or host tools like ccstatusline)",
         ))
     else:
         checks.append((
             "Node.js >= 18",
             "fail",
-            "(system dependency for install + escape hatch; "
-            "activate a node>=18 conda env or install nvm)",
+            "(no host node and no SIF available; activate a node>=18 "
+            "conda env, or have the lab admin provision the SIF)",
         ))
 
     # 3. uv available
@@ -110,27 +110,41 @@ def _gather_checks(
     ))
 
     # 4. Each agent binary
+    # For SIF-baked agents (codex/opencode/pi) the wrapper at
+    # <install_dir>/bin/agent-<key> + a readable SIF is all we need —
+    # the actual binary lives inside the SIF, not on the host. Claude
+    # (curl method) keeps the legacy host-symlink check.
     for key in agents:
         agent = AGENTS.get(key)
         if not agent:
             continue
-        binary = shutil.which(agent["binary"])
-        if not binary:
-            # Check in install dir
-            bin_path = install_dir / "node_modules" / ".bin" / agent["binary"]
-            if not bin_path.exists():
-                bin_path = install_dir / "bin" / agent["binary"]
-            binary = str(bin_path) if bin_path.exists() else None
 
-        ver = ""
-        if binary:
-            try:
-                result = subprocess.run(
-                    agent["version_cmd"], capture_output=True, text=True, timeout=10
-                )
-                ver = result.stdout.strip().split("\n")[0][:40]
-            except Exception:
-                ver = "installed"
+        wrapper_path = install_dir / "bin" / f"agent-{key}"
+        sif_ok = _sif_can_run_node(config)  # cheap; reuses the same probe
+
+        if agent.get("method") == "npm":
+            # SIF-baked: wrapper + SIF readable = good
+            if wrapper_path.exists() and sif_ok:
+                ver = "via SIF"
+                binary = str(wrapper_path)
+            else:
+                binary = None
+                ver = ""
+        else:
+            # curl-installed (claude) — check host symlink as before
+            binary = shutil.which(agent["binary"])
+            if not binary:
+                bin_path = install_dir / "bin" / agent["binary"]
+                binary = str(bin_path) if bin_path.exists() else None
+            ver = ""
+            if binary:
+                try:
+                    result = subprocess.run(
+                        agent["version_cmd"], capture_output=True, text=True, timeout=10
+                    )
+                    ver = result.stdout.strip().split("\n")[0][:40]
+                except Exception:
+                    ver = "installed"
 
         checks.append((
             f"{agent['display_name']} ({ver})" if ver else agent['display_name'],
@@ -228,15 +242,24 @@ def _gather_vscode_checks(
 
     rows: list[tuple[str, str, str]] = []
 
+    sif_str = config.get("sandbox_sif_path", "")
+    sif_path = Path(sif_str).expanduser() if sif_str else None
+
     if "codex" in agents:
-        sif_str = config.get("sandbox_sif_path", "")
-        sif_path = Path(sif_str).expanduser() if sif_str else None
         drift = codex_version_drift_check(sif_path)
         if drift is not None:
             rows.append(drift)
 
     if "opencode" in agents:
         rows.append(opencode_path_shim_check(install_dir))
+
+    if "pi" in agents:
+        from coding_agents.commands.doctor_vscode import (
+            pi_default_settings_in_sif_check,
+        )
+        pi_check = pi_default_settings_in_sif_check(sif_path)
+        if pi_check is not None:
+            rows.append(pi_check)
 
     ack = no_wrap_acknowledgement()
     if ack is not None:

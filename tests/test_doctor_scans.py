@@ -147,4 +147,46 @@ def test_no_wrap_check_warns_when_set(monkeypatch):
     assert row is not None
     name, status, fix = row
     assert status == "warn"
-    assert "unsandboxed" in fix
+    assert "wrapper" in fix.lower() or "bypass" in fix.lower()
+
+
+# --------------------------------------------------------------------------- #
+# pi_default_settings_in_sif_check — Phase 2b doctor row
+# --------------------------------------------------------------------------- #
+
+def test_pi_defaults_check_returns_none_when_no_sif():
+    assert doctor_vscode.pi_default_settings_in_sif_check(None) is None
+
+
+def test_pi_defaults_check_returns_none_when_sif_missing(tmp_path):
+    assert doctor_vscode.pi_default_settings_in_sif_check(tmp_path / "nope.sif") is None
+
+
+def test_pi_defaults_check_passes_when_file_present(tmp_path, monkeypatch):
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
+    row = doctor_vscode.pi_default_settings_in_sif_check(sif)
+    assert row is not None
+    assert row[1] == "pass"
+
+
+def test_pi_defaults_check_warns_when_file_missing(tmp_path, monkeypatch):
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    fake = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
+    row = doctor_vscode.pi_default_settings_in_sif_check(sif)
+    assert row is not None
+    assert row[1] == "warn"
+    assert "rebuild SIF" in row[2]
+
+
+def test_pi_defaults_check_returns_none_when_apptainer_unavailable(tmp_path, monkeypatch):
+    sif = tmp_path / "agent.sif"
+    sif.write_bytes(b"\0")
+    def boom(*a, **kw):
+        raise FileNotFoundError("no apptainer")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert doctor_vscode.pi_default_settings_in_sif_check(sif) is None

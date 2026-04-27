@@ -276,16 +276,31 @@ async def _merge_existing_settings(
 
 
 async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog) -> None:
-    """Install a single agent."""
+    """Install a single agent.
+
+    For npm-method agents (codex, opencode, pi) the host npm install is
+    skipped — the agent runs from the SIF (which has the binary baked in
+    via the SIF build), and the wrapper template at
+    ``<install_dir>/bin/agent-<key>`` (created later in phase 8) routes
+    the wrapped flow through the SIF. The CODING_AGENTS_NO_WRAP=1 escape
+    hatch also goes via the SIF (see runtime/agent_vscode.exec_no_wrap).
+
+    Pi's ``post_install`` extension wiring (pi-ask-user et al.) is now
+    handled by the SIF builder + the wrapper template's first-run hook
+    (Phase 2b of the no-wrap-via-sif plan); the host post_install loop
+    is therefore dropped. No other agent currently uses post_install.
+    """
     method = agent["method"]
     _log.info("install_agent: %s (method=%s, package=%s)", key, method, agent.get("package", "N/A"))
 
     if method == "npm":
-        await _run_in_thread(npm_install, install_dir, agent["package"])
-        # Verify binary exists
-        bin_path = install_dir / "node_modules" / ".bin" / agent["binary"]
-        if not bin_path.exists():
-            raise FileNotFoundError(f"Binary not found after install: {bin_path}")
+        # SIF-baked agents — host install is dead weight after the no-wrap
+        # refactor. The wrapper at <install_dir>/bin/agent-<key> (phase 8)
+        # routes through the SIF.
+        log.write(
+            f"    [dim]agent runs from the SIF — skipping host npm install for {agent['display_name']}[/dim]"
+        )
+        return
 
     elif method == "curl":
         # Claude Code — install to default location, then symlink
@@ -309,25 +324,6 @@ async def _install_agent(key: str, agent: dict, install_dir: Path, log: RichLog)
         # Install and configure ccstatusline statusline
         if key == "claude":
             await _install_claude_statusbar(log, install_dir=install_dir)
-
-    # Post-install actions (e.g., Pi extensions). The agent binary lives at
-    # <install_dir>/node_modules/.bin/<binary> after npm install — it isn't
-    # on PATH yet, so we resolve the absolute path and substitute it in. We
-    # also log the actual error if the post-install fails (previously a
-    # bare 'except' silently swallowed the reason).
-    for cmd_str in agent.get("post_install", []):
-        try:
-            argv = shlex.split(cmd_str)
-            if argv and method == "npm":
-                bin_path = install_dir / "node_modules" / ".bin" / argv[0]
-                if bin_path.exists():
-                    argv[0] = str(bin_path)
-            await _run_in_thread(run, argv, check=False)
-            log.write(f"    [dim]post-install: {cmd_str}[/dim]")
-        except Exception as exc:
-            log.write(
-                f"    [yellow]post-install skipped: {cmd_str} ({exc})[/yellow]"
-            )
 
 
 _CCSTATUSLINE_VERSION = "2.2.10"
