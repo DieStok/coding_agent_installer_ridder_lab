@@ -9,7 +9,8 @@
     "@openai/codex": "*",
     "opencode-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
-    "ccstatusline": "2.2.10"
+    "ccstatusline": "2.2.10",
+    "@biomejs/biome": "*"
   },
   "engines": {
     "node": ">=20"

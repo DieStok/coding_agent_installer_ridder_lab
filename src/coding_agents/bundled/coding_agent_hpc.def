@@ -63,9 +63,9 @@ From: ubuntu:24.04
     cp /sif-build/package-lock.json /opt/agents/package-lock.json
     cd /opt/agents && npm ci --omit=dev
     # Symlink the four agent CLIs + ccstatusline (Claude Code statusline)
-    # into /usr/local/bin so they resolve from any PATH context inside the
-    # SIF, not just /opt/agents/node_modules/.bin.
-    for bin in claude codex opencode pi ccstatusline; do
+    # + biome (lint_runner Stop hook) into /usr/local/bin so they resolve
+    # from any PATH context inside the SIF, not just /opt/agents/node_modules/.bin.
+    for bin in claude codex opencode pi ccstatusline biome; do
       ln -sf "/opt/agents/node_modules/.bin/$bin" "/usr/local/bin/$bin"
     done
 

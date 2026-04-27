@@ -128,7 +128,7 @@ async def execute_install(state: InstallerState, log: "RichLog") -> None:
     # --- 2. Install tools ---
     if state.tools:
         _phase("🔧  Installing tools…")
-        await _install_tools(state.tools, install_dir, log)
+        await _install_tools(state.tools, install_dir, log, mode=state.mode)
 
     # --- 3. Install skills ---
     if state.skills:
@@ -409,8 +409,17 @@ async def _install_claude_statusbar(log: RichLog, *, install_dir: Path) -> None:
     )
 
 
-async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> None:
-    """Install supporting tools."""
+async def _install_tools(
+    tools: list[str], install_dir: Path, log: RichLog, *, mode: str = "hpc"
+) -> None:
+    """Install supporting tools.
+
+    HPC mode: biome is baked into the SIF (alongside ccstatusline), so the
+    host npm install for it is skipped — the lint_runner Stop hook fires
+    inside the SIF and finds biome on the SIF's PATH at
+    /opt/agents/node_modules/.bin/biome. Saves ~5–30 s on slow HPC egress.
+    Local mode still installs biome on the host since there's no SIF.
+    """
     venv_path = install_dir / "tools" / ".venv"
 
     # Python tools need a venv
@@ -443,14 +452,22 @@ async def _install_tools(tools: list[str], install_dir: Path, log: RichLog) -> N
             log.write(f"  [red]✗ crawl4ai: {exc}[/red]")
 
     if "linters" in tools:
-        # Node linter: biome
-        log.write("  Installing biome...")
-        try:
-            tools_dir = install_dir / "tools"
-            await _run_in_thread(npm_install, tools_dir, "@biomejs/biome")
-            log.write("  [green]✓[/green] biome installed")
-        except Exception as exc:
-            log.write(f"  [red]✗ biome: {exc}[/red]")
+        # Node linter: biome — only host-installed in --local mode. In HPC
+        # mode the SIF carries biome (bundled/sif/package.json), and the
+        # lint_runner hook fires inside the SIF so biome resolves via PATH.
+        if mode == "local":
+            log.write("  Installing biome (local mode, no SIF)...")
+            try:
+                tools_dir = install_dir / "tools"
+                await _run_in_thread(npm_install, tools_dir, "@biomejs/biome")
+                log.write("  [green]✓[/green] biome installed")
+            except Exception as exc:
+                log.write(f"  [red]✗ biome: {exc}[/red]")
+        else:
+            log.write(
+                "  [dim]biome runs from the SIF in HPC mode — "
+                "skipping host npm install[/dim]"
+            )
 
         # Static binary: shellcheck
         log.write("  Installing shellcheck v0.11.0...")

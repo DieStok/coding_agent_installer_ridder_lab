@@ -57,6 +57,15 @@ docker run --rm --privileged --platform linux/amd64 \
 ```
 *Spawns the SIF and runs `claude --version` inside it. Exit 0 + a version string proves the npm install + binary symlink worked end-to-end.*
 
+### 4a. Verify biome is on PATH inside the SIF
+```bash
+docker run --rm --privileged --platform linux/amd64 \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/apptainer/apptainer:1.4.5 \
+  apptainer exec coding_agent_hpc.sif biome --version
+```
+*The lint_runner Stop hook calls `biome` by bare name from inside the SIF, so a missing PATH symlink would silently break linting on agent stop. Exit 0 + a version string confirms the wrapper-side `lint_runner` hook will find it.*
+
 ### 4b. Verify Pi defaults baked in (no-wrap-via-sif plan, phase 2b)
 ```bash
 docker run --rm --privileged --platform linux/amd64 \
