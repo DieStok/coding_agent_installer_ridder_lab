@@ -330,7 +330,7 @@ fi
 # All four agents persist runtime state under $HOME ("agent state" =
 # settings, deny-rules, OAuth tokens, session DBs, MCP config, memory,
 # file-history, snapshots, LSP caches, prompt history, …). The base
-# wrapper uses --no-mount home,tmp so the host HOME is invisible inside
+# wrapper uses --no-mount home so the host HOME is invisible inside
 # the SIF; without an explicit bind-mount each agent runs in "minimal"
 # mode — its host-side state is unreachable.
 #
@@ -532,9 +532,19 @@ if [ -z "${CODING_AGENTS_VERBOSE:-}" ]; then
 fi
 
 # --- Exec ---
+# Why we mount host /tmp (no `tmp` in --no-mount):
+# Apptainer's --writable-tmpfs overlay on /tmp rejects some syscalls
+# pi-subagents needs (probed 2026-04-27: Pi loads correctly with host
+# /tmp mounted, fails with `EPERM access /tmp/pi-subagents-uid-<uid>/
+# async-subagent-results` against the SIF tmpfs). Suspect inotify_add_watch
+# or fcntl-locking semantics on apptainer's overlay tmpfs differ from a
+# real tmpfs. Mounting host /tmp resolves it for all four agents and is
+# the apptainer default outside of --containall anyway. Cluster nodes
+# share /tmp under standard sticky-bit semantics (1777), so no security
+# regression — every agent already writes its own per-uid subdir there.
 exec apptainer exec \
   --containall \
-  --no-mount home,tmp \
+  --no-mount home \
   --writable-tmpfs \
   --env "HOME=$HOME" \
   --bind "$PWD:$PWD" \

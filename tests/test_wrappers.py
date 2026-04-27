@@ -432,6 +432,31 @@ def test_wrapper_filters_cosmetic_apptainer_warnings():
     )
 
 
+def test_wrapper_mounts_host_tmp_not_sif_tmpfs():
+    """Regression: pi-subagents fails to load with
+        EPERM: operation not permitted, access
+        '/tmp/pi-subagents-uid-<uid>/async-subagent-results'
+    when the wrapper uses `--no-mount home,tmp` + `--writable-tmpfs`.
+    Probed 2026-04-27: removing `tmp` from --no-mount (so apptainer
+    bind-mounts host /tmp instead of using the SIF tmpfs overlay) makes
+    Pi load all four extensions correctly.
+
+    The wrapper must therefore use `--no-mount home` only — never
+    `--no-mount home,tmp` or `--no-mount tmp`.
+    """
+    text = load_template()
+    assert "--no-mount home,tmp" not in text, (
+        "wrapper still uses --no-mount home,tmp — that breaks "
+        "pi-subagents (apptainer's --writable-tmpfs overlay on /tmp "
+        "rejects some ops with EPERM that the host's real tmpfs "
+        "accepts). Use `--no-mount home` and let host /tmp mount."
+    )
+    assert "--no-mount home" in text, (
+        "wrapper must still suppress the auto-mount of host home — "
+        "that's our isolation discipline."
+    )
+
+
 def test_wrapper_skips_home_bind_when_under_pwd():
     """When $PWD == $HOME (a common case — users SSH in and just
     `opencode --port ...` from their home), `--bind $PWD:$PWD` already
