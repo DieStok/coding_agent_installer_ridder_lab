@@ -10,7 +10,7 @@ for multiple AI coding agents.
 |---|---|---|---|
 | **Claude Code** | `claude` | `anthropic.claude-code` | Native binary (`curl -fsSL https://claude.ai/install.sh \| bash`) |
 | **Codex CLI** | `codex` | `openai.chatgpt` | `npm i -g @openai/codex` |
-| **OpenCode** | `opencode` | `sst-dev.opencode` | `npm i -g opencode` |
+| **OpenCode** | `opencode` | `sst-dev.opencode` | `npm i -g opencode-ai` |
 | **Pi** | `pi` | `pi0.pi-vscode` | `npm i -g @mariozechner/pi-coding-agent` |
 | **Gemini CLI** | `gemini` | — | `npm i -g @google/gemini-cli` |
 | **Amp** | `amp` | — | `npm i -g @sourcegraph/amp` |
