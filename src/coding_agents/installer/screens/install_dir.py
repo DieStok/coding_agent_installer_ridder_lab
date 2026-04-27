@@ -82,8 +82,11 @@ class InstallDirScreen(Screen):
                 )
 
             yield Static(
-                "Where should coding-agents install agents, tools, and skills?\n"
-                "This directory will contain all binaries, node_modules, and configs.",
+                "Where should coding-agents install wrappers, tools, and skills?\n"
+                "This directory holds the per-agent wrapper scripts in [bold]bin/[/bold], "
+                "the linter/biome workspace in [bold]tools/[/bold], skills, hooks, and "
+                "merged agent configs. Agents themselves run from the SIF — no host "
+                "node_modules for codex/opencode/pi.",
                 classes="step-description",
             )
             yield Input(value=default, placeholder="/path/to/coding_agents", id="dir-input")

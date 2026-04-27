@@ -180,16 +180,19 @@ silent un-sandboxed invocation.
 
 ## Installer Walkthrough
 
-`coding-agents install` is a Textual TUI with seven screens. Every step has a
-back button; nothing is written to disk until the final "Install" press.
-Defaults are tuned for the UMC Utrecht HPC cluster in HPC mode; `--local`
-drops everything HPC-specific automatically.
+`coding-agents install` is a Textual TUI with six screens (plus a
+post-install next-steps screen). Every step has a back button; nothing
+is written to disk until the final "Install" press. Defaults are tuned
+for the UMC Utrecht HPC cluster in HPC mode; `--local` drops everything
+HPC-specific automatically. Pass `--developer` to expand Steps 4 and 5
+from info-only summaries to full multi-select pickers.
 
 ### Step 1 — Installation Directory
 
-Single path field. Everything the installer manages (agent binaries,
-`node_modules/`, tools venv, skills, hooks, jai configs, logs) lives under this
-directory.
+Single path field. Holds the per-agent wrapper scripts in `bin/`, the
+linter/biome workspace in `tools/`, skills, hooks, and merged agent
+configs. Agents themselves run from the SIF — no host `node_modules/`
+for codex/opencode/pi.
 
 - **Default (HPC)**: `/hpc/compgen/users/$USER/coding_agents` when
   `/hpc/compgen/users` exists, else `~/coding_agents`.
@@ -211,43 +214,42 @@ Radio choice between three presets; pick "Custom" to hand-pick agents.
 
 ### Step 3 — VSCode Extensions
 
-Single toggle. Auto-skipped for agents without an extension (Gemini, Amp).
+Info-only on HPC; the user installs extensions in their *local* VSCode
+and they ride along over Remote-SSH automatically. `--local` mode adds a
+toggle for `code --install-extension` when the `code` binary is on PATH.
 
-- **Default**: on. Extensions are installed via `code --install-extension`
-  when the `code` binary is on PATH; otherwise the list is written to
-  `extensions.json` for manual install via Remote-SSH.
-- Extensions: `anthropic.claude-code`, `openai.chatgpt`, `sst-dev.opencode`,
-  `pi0.pi-vscode`.
+- A `vscode-extensions.json` recommendation file is always written into
+  `<install_dir>/` for manual import.
+- Extensions: `anthropic.claude-code`, `openai.chatgpt`,
+  `sst-dev.opencode`, `pi0.pi-vscode` (Gemini and Amp don't publish
+  one).
 
 ### Step 4 — Tools & Supporting Software
 
-Multi-select. All four are enabled by default.
+Info-only summary by default; `--developer` shows the multi-select picker.
 
-| Option | Default | Installs into |
-|---|---|---|
-| `crawl4ai` (web crawling library) | on | tools venv (uv) |
-| `agent-browser` (headless browser, bundles Chromium) | on | `tools/node_modules/` |
-| Linters: ruff, vulture, pyright, yamllint, biome, shellcheck | on | tools venv + `tools/node_modules/` + `tools/bin/` |
-| `entire` CLI (session recording) | on | system install via `curl … | bash`, symlinked into `$INSTALL_DIR/bin` |
+The lab default set is **`linters`** only:
 
-If you selected Pi in step 2, `pi-ask-user` and `pi-subagents` are
-auto-installed after Pi itself — you don't need to toggle anything here for
-that.
+| Item | Installs into |
+|---|---|
+| Linters: ruff, vulture, pyright, yamllint | `tools/.venv/` (via `uv pip install`) |
+| biome | `tools/node_modules/@biomejs/biome` |
+| shellcheck v0.11.0 | `tools/bin/shellcheck` (static binary) |
 
-### Step 5 — jai Sandbox
+In `--developer` mode you can additionally toggle the `entire` CLI
+(session recording, system-wide install symlinked into
+`<install_dir>/bin/`).
 
-Single toggle. Only offered in HPC mode — `--local` forces this off and skips
-the step.
+Pi's four lab-default extensions (`pi-ask-user`, `pi-subagents`,
+`pi-web-access`, `pi-mcp-adapter`) are **not** installed by the host —
+they're baked into the SIF and seeded into your
+`~/.pi/agent/settings.json` on the first wrapped Pi message via the
+wrapper template's first-run hook. Nothing to toggle here for that.
 
-- **Default (HPC)**: on. Prepares bare-mode jai configs for each selected
-  agent under `$INSTALL_DIR/jai/` and creates `jai-<agent>` wrapper scripts
-  in `$INSTALL_DIR/bin/`. The wrappers run the agent without sandboxing (with
-  a warning) until `jai` is installed system-wide by an admin.
+### Step 5 — Skills & Hooks
 
-### Step 6 — Skills & Hooks
-
-Two multi-select lists. Everything is on by default; `--local` silently
-drops the HPC-only entries.
+Info-only summary by default; `--developer` shows the two multi-select
+lists. `--local` silently drops the HPC-only entries.
 
 **Skills** (distributed to every compatible agent via symlinks during
 `coding-agents sync`):
@@ -257,7 +259,6 @@ drops the HPC-only entries.
 | `compound-engineering` | on | on | git clone |
 | `scientific-agent-skills` | on | on | git clone |
 | `autoresearch` | on | on | git clone |
-| `crawl4ai` | on | on | bundled |
 | `hpc-cluster` | on | **skipped** | HPC shared path (`.skill` zip) |
 
 **Hooks** (agent lifecycle scripts, wired into Claude Code via
@@ -271,15 +272,17 @@ drops the HPC-only entries.
 | `lint_runner` (ruff, vulture, pyright, yamllint, biome, shellcheck) | on | on | Stop |
 | `hpc_validator` (directory convention check) | on | **skipped** | Stop |
 
-### Step 7 — Review & Install
+### Step 6 — Review & Install
 
-Summary of all selections. Press **Install** to execute — the TUI streams
-progress into a live log. Nothing on disk until this point.
+Summary of all selections. Press **Install** to execute — the TUI
+streams progress into a live log (and a "verbose output" pane for
+subprocess stdout/stderr). Nothing on disk until this point.
 
-After install: `source ~/.bashrc` (or `~/.zshrc`) to pick up the new `PATH` +
-env vars, then run `coding-agents doctor` to verify. Selections are persisted
-to `~/.coding-agents.json` so re-running `install` pre-populates the screens
-with your previous answers.
+When the install completes, a final next-steps screen lists the
+post-install commands (`source ~/.bashrc`, `coding-agents sync`,
+`coding-agents doctor`, VSCode extension links). Selections are
+persisted to `~/.coding-agents.json` so re-running `install`
+pre-populates the screens with your previous answers.
 
 ## Package Structure
 
@@ -295,7 +298,7 @@ with your previous answers.
 │   │   ├── tui.py              # Textual App with screen stack
 │   │   ├── state.py            # InstallerState dataclass
 │   │   ├── executor.py         # Installation execution logic
-│   │   └── screens/            # 7 TUI screens
+│   │   └── screens/            # 6 TUI screens + post-install next-steps
 │   └── commands/
 │       ├── sync.py             # Config distribution
 │       ├── doctor.py           # Health checks

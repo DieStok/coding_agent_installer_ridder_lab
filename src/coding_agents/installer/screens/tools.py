@@ -63,8 +63,10 @@ class ToolsScreen(Screen):
                 )
                 if "pi" in self.state.agents:
                     yield Static(
-                        "Pi extensions (pi-ask-user, pi-subagents) will be auto-installed "
-                        "after Pi setup.",
+                        "Pi extensions (pi-ask-user, pi-subagents, pi-web-access, "
+                        "pi-mcp-adapter) are baked into the SIF and seeded into your "
+                        "[bold]~/.pi/agent/settings.json[/bold] on the first wrapped "
+                        "Pi message — nothing to install or toggle here.",
                         classes="muted",
                     )
 

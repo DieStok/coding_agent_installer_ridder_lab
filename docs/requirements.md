@@ -85,13 +85,16 @@ Default selection: Claude Code, Codex, OpenCode, Pi
 
 ### Step 4: Pi Extensions
 
-If Pi selected in Step 2, install default extensions (inform user, not interactive):
+Updated 2026-04-27 by the no-wrap-via-sif refactor. The four lab-default Pi extensions are baked into the SIF, not host-installed:
 
 | Extension | Source | Install method |
 |---|---|---|
-| `pi-ask-user` | [npmjs.com/package/pi-ask-user](https://www.npmjs.com/package/pi-ask-user) | `npm i -g pi-ask-user` |
-| `pi-prompt-template-model` | [github.com/nicobailon/pi-prompt-template-model](https://github.com/nicobailon/pi-prompt-template-model) | `npm i -g pi-prompt-template-model` or clone to `~/.pi/agent/extensions/` |
-| `pi-subagents` | [github.com/nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents/) | `npm i -g pi-subagents` or clone to `~/.pi/agent/extensions/` |
+| `pi-ask-user` | [npmjs.com/package/pi-ask-user](https://www.npmjs.com/package/pi-ask-user) | SIF `%post`: `pi install npm:pi-ask-user` |
+| `pi-subagents` | [github.com/nicobailon/pi-subagents](https://github.com/nicobailon/pi-subagents/) | SIF `%post`: `pi install npm:pi-subagents` |
+| `pi-web-access` | npm: `pi-web-access` | SIF `%post`: `pi install npm:pi-web-access` |
+| `pi-mcp-adapter` | npm: `pi-mcp-adapter` | SIF `%post`: `pi install npm:pi-mcp-adapter` |
+
+The SIF builder snapshots the resulting `~/.pi/agent/settings.json` to `/opt/pi-default-settings.json`. The wrapper template's first-run hook copies this file into each user's `~/.pi/agent/settings.json` on their first wrapped Pi message — so the host installer never runs `pi install` and never touches `~/.pi/`. See [`docs/vscode_integration.md` § SIF-builder requirements](vscode_integration.md#sif-builder-requirements-lab-admin) for the build steps and the verification probe (`coding-agents doctor` → "Pi defaults baked in SIF").
 
 Display: "More Pi extensions: https://www.npmjs.com/search?q=keywords:pi-package and https://discord.gg/pi-coding-agent"
 
