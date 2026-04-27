@@ -6,6 +6,33 @@ The lab admin runs the build once, copies the SIF to the HPC share, and atomic-s
 
 ---
 
+## Simple approach: one command
+
+```bash
+bash scripts/build_and_deploy_sif.sh dstoker@hpc_ext
+```
+
+This wraps the entire flow below into a single invocation:
+
+1. **Build** the SIF via Docker+Apptainer 1.4.5 from `coding_agent_hpc.def` (skipped if you pass `--skip-build` to reuse a local `coding_agent_hpc.sif`).
+2. **Compute** the local sha256 sidecar.
+3. **Upload** SIF + sidecar to `/hpc/compgen/users/shared/agent/` under a timestamped name (`coding_agent_hpc-YYYY-MM-DD-HHMM.sif`).
+4. **Verify** by comparing the local sha256 to `sha256sum` of the remote file. A mismatch aborts before the swap so a corrupt upload can't poison `current.sif`.
+5. **Atomic-swap** `current.sif` (and `current.sif.sha256`) to point at the new build via `ln -sfn` + `mv -T`. The previous SIF is **never deleted** — the script prints the exact rollback ssh command at the end.
+
+The first positional argument is the ssh target (`USER@HOST`); the script assumes passwordless key auth is set up. Useful flags:
+
+- `--remote-share-dir PATH` — non-default share dir (default `/hpc/compgen/users/shared/agent`).
+- `--remote-name NAME` — override the timestamped filename.
+- `--skip-build` — reuse the existing local `coding_agent_hpc.sif`.
+- `--no-swap` — upload + verify only, leave `current.sif` untouched. Useful for staging a build and activating later.
+
+Numbered exit codes — 3 (Docker not running), 4 (build failed), 5 (upload failed), 6 (sha256 mismatch), 7 (swap failed) — so a failure points straight at the broken step.
+
+Use the manual flow below if you need to inspect intermediate state, modify the build, regenerate the package-lock, or are otherwise debugging. Everything else: use the one-liner above.
+
+---
+
 ## Prerequisites
 
 - **Docker Desktop** running (whale icon in the menu bar shows "Docker Desktop is running").
