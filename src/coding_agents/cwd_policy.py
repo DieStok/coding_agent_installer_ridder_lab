@@ -1,10 +1,12 @@
 """Lab cwd-policy checks (de Ridder lab convention).
 
-Runs both at CLI top-level (warn-only — see ``check_cwd_warn_only``) and
-at wrapper-invocation time (refusal + warning — implemented as bash in
-``bundled/templates/wrapper/agent.template.sh``). The two paths share
-the same set of refusal / warning conditions, kept in lockstep here as
-the single source of truth for the policy.
+Enforced at wrapper-invocation time (refusal + warning — implemented as
+bash in ``bundled/templates/wrapper/agent.template.sh``). The Python
+``evaluate()`` here is the single source of truth for the policy and is
+mirrored in the bash wrapper. ``coding-agents`` CLI subcommands
+(install, sync, doctor, …) do NOT apply this policy — they're admin
+operations, not agent runs. ``check_cwd_warn_only`` is kept available
+for callers that explicitly want the soft variant.
 
 Refusal conditions (wrapper-side; CLI-side warns instead):
   - $PWD under ``/hpc/compgen/users/shared/`` — read-only shared lab

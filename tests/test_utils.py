@@ -37,6 +37,34 @@ def test_safe_symlink_replaces_existing_symlink():
         assert target.read_text() == "second"
 
 
+def test_safe_symlink_idempotent_does_not_clobber_source():
+    """Regression: a previous version called target.resolve() before
+    deciding what to overwrite. On a re-run (target already a working
+    symlink), .resolve() reassigned `target` to the source path, then
+    the function renamed the source to source.bak and created a
+    self-loop symlink at the source — every subsequent read raised
+    ELOOP ("Too many levels of symbolic links")."""
+    from coding_agents.utils import safe_symlink
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = Path(tmpdir) / "source.txt"
+        source.write_text("hello")
+        target = Path(tmpdir) / "link.txt"
+
+        safe_symlink(source, target)
+        safe_symlink(source, target)  # the re-install / re-sync case
+
+        assert source.exists()
+        assert not source.is_symlink(), "source must remain a regular file"
+        assert source.read_text() == "hello"
+        assert not Path(str(source) + ".bak").exists(), (
+            "source must not have been backed up — it was the symlink "
+            "target, not a colliding regular file"
+        )
+        assert target.is_symlink()
+        assert target.read_text() == "hello"
+
+
 def test_safe_symlink_backs_up_regular_file():
     from coding_agents.utils import safe_symlink
 

@@ -230,7 +230,12 @@ def safe_symlink(source: Path, target: Path) -> None:
             replaces_existing=target.exists() or target.is_symlink(),
         )
         return
-    target = target.resolve() if target.exists() else target
+    # Do NOT call target.resolve() here. If target is already a working
+    # symlink (the common re-install / re-sync case), .resolve() follows
+    # the link and reassigns `target` to the source path — the function
+    # then renames the source to source.bak and creates a self-loop
+    # symlink at the source. Subsequent reads raise ELOOP ("Too many
+    # levels of symbolic links"). Operate on the link itself.
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if target.is_symlink():
