@@ -129,14 +129,16 @@ extensions' "spawn" hooks into our SIF wrapper:
   dir is prepended to `$PATH` via a second shell-rc block, plus the
   `terminal.integrated.env.linux.PATH` setting as defence-in-depth.
 - **`agent-vscode` helper** copied to `<install_dir>/bin/` allocates a
-  per-Cursor-session SLURM job (`salloc --no-shell` at first spawn,
+  per-VSCode-session SLURM job (`salloc --no-shell` at first spawn,
   cached under `flock` at `${XDG_RUNTIME_DIR:-$HOME/.coding-agents}/vscode-session.json`)
   and dispatches every subsequent spawn via `srun --jobid=<id>` into the
-  existing terminal `agent-<n>` wrapper.
+  existing terminal `agent-<n>` wrapper. The session is keyed by
+  `VSCODE_GIT_IPC_HANDLE` (or `VSCODE_PID`, falling back to ppid) so a
+  worker restart inside the extension host doesn't re-allocate a job.
 - Set `CODING_AGENTS_NO_WRAP=1` to bypass the wrap entirely (escape hatch
   for debugging — `doctor` surfaces it as a warning).
 - Run `coding-agents vscode-reset` if a session goes wrong (e.g. after
-  Cursor restart while a salloc was retrying); next spawn re-allocates fresh.
+  VSCode restart while a salloc was retrying); next spawn re-allocates fresh.
 
 ## Sandboxing reference
 

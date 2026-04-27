@@ -153,7 +153,7 @@ def test_codex_srun_no_pty_when_isatty_false(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    rc = agent_vscode.run_with_lock("codex", [], install_dir, cursor_pid=1)
+    rc = agent_vscode.run_with_lock("codex", [], install_dir, vscode_session="ppid:1")
     assert rc == 0
     srun_cmd = next(c for c in captured if c[0] == "srun")
     assert "--pty" not in srun_cmd, "codex extension uses pipes; --pty would break stdio"

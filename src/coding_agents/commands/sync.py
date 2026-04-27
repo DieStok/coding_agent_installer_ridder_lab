@@ -38,8 +38,33 @@ def run_sync() -> None:
     _sync_hooks(install_dir, agents, config.get("hooks", []))
     _sync_deny_rules(install_dir, agents)
     _sync_mcp(install_dir, agents)
+    if mode != "local":
+        _sync_vscode_wrapper_settings(install_dir, agents)
 
     console.print("\n[green bold]Sync complete.[/green bold]")
+
+
+def _sync_vscode_wrapper_settings(install_dir: Path, agents: list[str]) -> None:
+    """Re-emit wrapper hooks into VSCode settings.json.
+
+    VSCode rewrites settings.json on certain UI actions; a periodic re-emit
+    via ``coding-agents sync`` keeps our wrapper keys present afterwards.
+    Idempotent — byte-identical output when nothing has drifted.
+    """
+    wrappable = {"claude", "codex", "opencode", "pi"}
+    selected = sorted(set(agents) & wrappable)
+    if not selected:
+        return
+    console.print("[bold]VSCode wrapper hooks:[/bold]")
+    from coding_agents.installer.policy_emit import emit_managed_vscode_settings
+    target = emit_managed_vscode_settings(install_dir, selected)
+    if target is None:
+        console.print(
+            "  [yellow]⚠ No VSCode settings.json found — connect VSCode to "
+            "this host then re-run `coding-agents sync`.[/yellow]"
+        )
+    else:
+        console.print(f"  [green]✓[/green] re-emitted to {target}")
 
 
 def _sync_agents_md(install_dir: Path, agents: list[str], home: Path) -> None:

@@ -90,7 +90,7 @@ def test_read_cache_wrong_schema_returns_none(tmp_path):
 
 def test_write_then_read_roundtrip(tmp_path):
     p = tmp_path / "session.json"
-    state = agent_vscode.initial_state(cursor_pid=42)
+    state = agent_vscode.initial_state(vscode_session=42)
     state["job_id"] = 12345
     agent_vscode.write_cache(p, state)
     assert agent_vscode.read_cache(p) == state
@@ -163,7 +163,7 @@ def test_allocate_via_salloc_parses_stderr(monkeypatch):
         stderr="salloc: Granted job allocation 7654321\n",
     )
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
-    job_id, cmd, err = agent_vscode.allocate_via_salloc(cursor_pid=999)
+    job_id, cmd, err = agent_vscode.allocate_via_salloc(vscode_session=999)
     assert job_id == 7654321
     assert "--no-shell" in cmd
     assert err == ""
@@ -174,7 +174,7 @@ def test_allocate_via_salloc_failure(monkeypatch):
         args=[], returncode=1, stdout="", stderr="salloc: error: invalid account\n"
     )
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
-    job_id, cmd, err = agent_vscode.allocate_via_salloc(cursor_pid=1)
+    job_id, cmd, err = agent_vscode.allocate_via_salloc(vscode_session=1)
     assert job_id is None
     assert "invalid account" in err
 
@@ -183,7 +183,7 @@ def test_allocate_via_salloc_command_not_found(monkeypatch):
     def boom(*a, **kw):
         raise FileNotFoundError(2, "no salloc")
     monkeypatch.setattr(subprocess, "run", boom)
-    job_id, cmd, err = agent_vscode.allocate_via_salloc(cursor_pid=1)
+    job_id, cmd, err = agent_vscode.allocate_via_salloc(vscode_session=1)
     assert job_id is None
     assert "FileNotFoundError" in err
 
@@ -309,7 +309,7 @@ def test_main_cache_hit_skips_salloc(isolated_cache, install_dir, monkeypatch):
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["job_id"] = 555
     agent_vscode.write_cache(cache_p, state)
     monkeypatch.setattr(agent_vscode, "squeue_job_alive", lambda jid: True)
@@ -331,7 +331,7 @@ def test_main_cache_dead_job_reallocates(isolated_cache, install_dir, monkeypatc
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["job_id"] = 100
     agent_vscode.write_cache(cache_p, state)
 
@@ -374,7 +374,7 @@ def test_main_persistent_failure_refuses(isolated_cache, install_dir, monkeypatc
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["failure_count"] = 2
     state["last_failure_at"] = _stamp_seconds_ago(60)
     agent_vscode.write_cache(cache_p, state)
@@ -396,7 +396,7 @@ def test_main_cooldown_rate_limit(isolated_cache, install_dir, monkeypatch):
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["failure_count"] = 1
     state["last_failure_at"] = _stamp_seconds_ago(5)  # within 30s cooldown
     agent_vscode.write_cache(cache_p, state)
@@ -409,7 +409,7 @@ def test_main_retry_after_cooldown(isolated_cache, install_dir, monkeypatch):
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["failure_count"] = 1
     state["last_failure_at"] = _stamp_seconds_ago(60)  # past cooldown
     agent_vscode.write_cache(cache_p, state)
@@ -431,19 +431,19 @@ def test_main_retry_after_cooldown(isolated_cache, install_dir, monkeypatch):
     assert cache["failure_count"] == 0
 
 
-def test_main_cursor_pid_change_invalidates_cache(isolated_cache, install_dir, monkeypatch):
-    """Cached cursor_pid != current ppid → drop cache, allocate fresh."""
+def test_main_vscode_session_change_invalidates_cache(isolated_cache, install_dir, monkeypatch):
+    """Cached vscode_session_pid != current key → drop cache, allocate fresh."""
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(cursor_pid=12345)
+    state = agent_vscode.initial_state(vscode_session="ppid:12345")
     state["job_id"] = 111
-    state["failure_count"] = 2  # poisoned by a since-restarted Cursor
+    state["failure_count"] = 2  # poisoned by a since-restarted VSCode
     state["last_failure_at"] = _stamp_seconds_ago(10)
     agent_vscode.write_cache(cache_p, state)
 
     monkeypatch.setattr(agent_vscode, "squeue_job_alive", lambda jid: True)
-    monkeypatch.setattr(agent_vscode, "cursor_pid_from_env", lambda: 67890)  # different ppid
+    monkeypatch.setattr(agent_vscode, "vscode_session_key", lambda: "ppid:67890")
 
     def fake_run(cmd, *args, **kwargs):
         if cmd[0] == "salloc":
@@ -458,7 +458,7 @@ def test_main_cursor_pid_change_invalidates_cache(isolated_cache, install_dir, m
     assert rc == 0
     cache = agent_vscode.read_cache(cache_p)
     assert cache and cache["job_id"] == 999
-    assert cache["cursor_pid"] == 67890
+    assert cache["vscode_session_pid"] == "ppid:67890"
     assert cache["failure_count"] == 0
 
 
@@ -535,7 +535,7 @@ def test_main_age_out_resets_old_failure(isolated_cache, install_dir, monkeypatc
     monkeypatch.setattr(sys, "argv", [str(install_dir / "bin" / "agent-vscode")])
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(os.getppid())
+    state = agent_vscode.initial_state(agent_vscode.vscode_session_key())
     state["failure_count"] = 5
     state["last_failure_at"] = _stamp_seconds_ago(5 * 3600)  # > 4h
     agent_vscode.write_cache(cache_p, state)
@@ -585,7 +585,7 @@ def test_concurrent_invocations_serialize(isolated_cache, install_dir, monkeypat
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    rc1 = agent_vscode.run_with_lock("pi", [], install_dir, cursor_pid=4242)
-    rc2 = agent_vscode.run_with_lock("pi", [], install_dir, cursor_pid=4242)
+    rc1 = agent_vscode.run_with_lock("pi", [], install_dir, vscode_session=4242)
+    rc2 = agent_vscode.run_with_lock("pi", [], install_dir, vscode_session=4242)
     assert rc1 == 0 and rc2 == 0
     assert salloc_calls == 1  # second call reused the cached job

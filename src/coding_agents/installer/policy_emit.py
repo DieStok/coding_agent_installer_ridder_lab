@@ -340,23 +340,19 @@ def unset_managed_vscode_settings(
 
     Sets each key to ``null`` rather than deleting the line, since VSCode
     treats ``null`` as "key absent" and the merge-on-uninstall is symmetric
-    with the merge-on-install.
+    with the merge-on-install. The key list is derived from
+    ``_vscode_wrapper_keys`` so adding a new key can't drift the unset path.
     """
     target = _resolve_vscode_settings_path(target_settings_path)
     if target is None or not target.exists():
         return None
 
-    null_keys: dict[str, Any] = {
-        "pi-vscode.path": None,
-        "claudeCode.claudeProcessWrapper": None,
-        "claudeCode.useTerminal": None,
-        "claudeCode.disableLoginPrompt": None,
-        "claudeCode.initialPermissionMode": None,
-        "claudeCode.environmentVariables": None,
-        "chatgpt.cliExecutable": None,
-        "chatgpt.openOnStartup": None,
-        "terminal.integrated.env.linux": None,
-    }
+    # Use a placeholder install_dir — only the *keys* matter here; values
+    # are about to be replaced with null.
+    placeholder = Path("/")
+    all_keys = _vscode_wrapper_keys(placeholder, ["claude", "codex", "opencode", "pi"])
+    null_keys: dict[str, Any] = {key: None for key in all_keys}
+
     from coding_agents.runtime.jsonc_merge import deep_merge_jsonc_settings
     deep_merge_jsonc_settings(target, null_keys)
     return target

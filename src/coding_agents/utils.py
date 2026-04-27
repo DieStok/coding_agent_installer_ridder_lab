@@ -459,29 +459,42 @@ def _strip_block(content: str, markers: tuple[str, str]) -> str:
     """Remove the marker-guarded block plus the blank-line gap that hugged it.
 
     Why: ``_write_guarded_block`` injects the block with a leading "\\n\\n"
-    separator. If we leave the surrounding blank lines on strip, every
-    subsequent re-emit accumulates one more blank line. Collapsing
-    ``\\n\\n+`` runs to a single ``\\n`` after the strip keeps the file
-    byte-stable across repeated installs.
+    separator. Every subsequent re-emit would otherwise accumulate one more
+    blank line as those padding newlines are preserved on strip. We collapse
+    consecutive blank lines **only at the splice point** (the gap left by
+    the removed block) — user-intentional double-blank lines elsewhere in
+    the rc file are preserved untouched.
     """
     lines = content.splitlines(keepends=True)
-    new_lines = []
+    pre: list[str] = []
+    post: list[str] = []
     inside = False
+    seen_block = False
     for line in lines:
         if markers[0] in line:
             inside = True
+            seen_block = True
             continue
         if markers[1] in line:
             inside = False
             continue
-        if not inside:
-            new_lines.append(line)
-    out = "".join(new_lines)
-    # Collapse any run of ≥ 2 consecutive blank lines (left behind when our
-    # block sat sandwiched between blank padding) into a single newline.
-    while "\n\n\n" in out:
-        out = out.replace("\n\n\n", "\n\n")
-    return out
+        if inside:
+            continue
+        (post if seen_block else pre).append(line)
+
+    if not seen_block:
+        return content
+
+    # Trim trailing blanks from the pre-side and leading blanks from the
+    # post-side. If both halves have content, separate with one blank line;
+    # otherwise concatenate without inserting one.
+    while pre and pre[-1].strip() == "":
+        pre.pop()
+    while post and post[0].strip() == "":
+        post.pop(0)
+    if pre and post:
+        return "".join(pre) + "\n" + "".join(post)
+    return "".join(pre) + "".join(post)
 
 
 def _write_guarded_block(

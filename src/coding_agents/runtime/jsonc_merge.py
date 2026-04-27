@@ -35,55 +35,15 @@ def _deep_merge(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]
 
 
 def _load_jsonc(path: Path) -> dict[str, Any]:
-    """Parse JSONC; raise on hard syntax error so caller can decide."""
+    """Parse JSONC (json5-tolerant); raise on hard syntax error."""
+    import json5  # hard dependency via pyproject.toml
+
     text = path.read_text()
     if not text.strip():
         return {}
-    try:
-        import json5  # type: ignore[import-not-found]
-    except ImportError:
-        # Fallback: treat as plain JSON. Strip line comments + trailing commas
-        # cheaply enough that vanilla settings.json parses; users with exotic
-        # JSONC will get a clear error message.
-        return _parse_plain_json_fallback(text)
-
     parsed = json5.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError(f"Expected object at top of {path}, got {type(parsed).__name__}")
-    return parsed
-
-
-def _parse_plain_json_fallback(text: str) -> dict[str, Any]:
-    """Best-effort JSONC handling without json5 — strip // line comments."""
-    cleaned_lines = []
-    for line in text.splitlines():
-        # Drop everything after an unquoted "//". This is the cheap path; users
-        # with /* block comments */ should install json5.
-        in_string = False
-        escape = False
-        cut = len(line)
-        for i, ch in enumerate(line):
-            if escape:
-                escape = False
-                continue
-            if ch == "\\":
-                escape = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if not in_string and ch == "/" and i + 1 < len(line) and line[i + 1] == "/":
-                cut = i
-                break
-        cleaned_lines.append(line[:cut])
-    cleaned = "\n".join(cleaned_lines)
-    # json.loads cannot handle trailing commas in {}/[] — strip them via
-    # a tolerant pass.
-    import re
-    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
-    parsed = json.loads(cleaned) if cleaned.strip() else {}
-    if not isinstance(parsed, dict):
-        raise ValueError(f"Expected JSON object, got {type(parsed).__name__}")
     return parsed
 
 

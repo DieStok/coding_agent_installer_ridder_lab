@@ -14,7 +14,7 @@ Flow (see plan §"Proposed Solution"):
                                            ``srun --jobid``.
 
 Failure semantics: one retry on the next spawn ≥30 s after a salloc failure;
-permanent refuse afterwards until vscode-reset / Cursor restart / 4 h age-out
+permanent refuse afterwards until vscode-reset / VSCode restart / 4 h age-out
 (per brainstorm decision 1).
 
 Standalone — only imports stdlib so it works after being copied to
@@ -46,8 +46,14 @@ DEFAULT_SALLOC_CPUS = "2"
 DEFAULT_SALLOC_ACCOUNT = "compgen"
 JOB_ID_RE = re.compile(r"job allocation (\d+)")
 
-EXIT_SUCCESS = 0
-EXIT_NO_AGENT = 2
+# Exit codes (also documented in module docstring above):
+#   0   success (or exec replaced this process — unreachable return)
+#   2   argparse parse error (raised by argparse itself, never returned here)
+#   12  inner wrapper / npm bin not found
+#   13  salloc failed (transient — retried after 30 s cooldown)
+#   14  srun failed (e.g. job died between squeue and srun)
+#   15  refuse — persistent failure budget exhausted; needs vscode-reset
+EXIT_NO_AGENT = 12
 EXIT_SALLOC_FAILED = 13
 EXIT_SRUN_FAILED = 14
 EXIT_REFUSE_PERSISTENT_FAILURE = 15
@@ -152,7 +158,7 @@ def cache_path() -> Path:
 
 
 def _now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.datetime.now(datetime.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _now_epoch() -> float:
@@ -231,13 +237,15 @@ def squeue_job_alive(job_id: int) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def allocate_via_salloc(cursor_pid: int) -> tuple[int | None, str, str]:
+def allocate_via_salloc(vscode_session: int | str) -> tuple[int | None, str, str]:
     """Run ``salloc --no-shell`` and parse the JOB_ID from stderr.
 
     Returns ``(job_id, salloc_cmd_str, stderr)``. ``job_id`` is None on
     failure; ``stderr`` carries the error text for the caller to surface.
     """
     user = os.environ.get("USER", "user")
+    # Sanitise the session key for use as a SLURM job-name suffix (alphanum + -).
+    session_tag = re.sub(r"[^A-Za-z0-9-]", "-", str(vscode_session))[:32] or "session"
     cmd = [
         "salloc",
         f"--account={DEFAULT_SALLOC_ACCOUNT}",
@@ -245,7 +253,7 @@ def allocate_via_salloc(cursor_pid: int) -> tuple[int | None, str, str]:
         f"--mem={DEFAULT_SALLOC_MEM}",
         f"--cpus-per-task={DEFAULT_SALLOC_CPUS}",
         "--no-shell",
-        f"--job-name=cod-ag-vscode-{user}-{cursor_pid}",
+        f"--job-name=cod-ag-vscode-{user}-{session_tag}",
     ]
     cmd_str = " ".join(cmd)
     try:
@@ -436,61 +444,84 @@ def parse_args(argv: list[str]) -> tuple[str, list[str]]:
     return args.agent, forwarded
 
 
-def cursor_pid_from_env() -> int:
-    """Return the parent PID — used to invalidate cache across Cursor restarts.
+def vscode_session_key() -> str:
+    """Return a stable identifier for the current VSCode session.
 
-    The extension host is the immediate parent of the stub; getppid() points
-    at it. If that PID changes between spawns (Cursor restart), the cache is
-    stale.
+    Prefers VSCode-supplied identifiers over ``os.getppid()``: under VSCode's
+    bootstrap-fork the immediate parent of the stub is often a short-lived
+    extension-host worker, not the long-lived host. Worker restarts would
+    flip ppid and (under the old heuristic) nuke the cache for no reason.
+
+    Resolution order:
+      1. ``VSCODE_GIT_IPC_HANDLE`` — set by VSCode for the host's git ipc
+         socket; stable for the host's lifetime.
+      2. ``VSCODE_PID`` — the renderer PID, also stable for the session.
+      3. ``os.getppid()`` — last-resort fallback. Returned as a string so
+         the cache always stores the same shape.
     """
-    return os.getppid()
+    handle = os.environ.get("VSCODE_GIT_IPC_HANDLE")
+    if handle:
+        return f"ipc:{handle}"
+    vp = os.environ.get("VSCODE_PID")
+    if vp:
+        return f"pid:{vp}"
+    return f"ppid:{os.getppid()}"
 
 
-def get_or_allocate_job(state: dict[str, Any], cursor_pid: int) -> tuple[int | None, str | None]:
+def get_or_allocate_job(
+    state: dict[str, Any],
+    vscode_session: int | str,
+    cache_p: Path,
+) -> tuple[int | None, str | None]:
     """Resolve to a live SLURM job id, allocating if needed.
 
     Returns ``(job_id, error_message)``. On success ``error_message`` is None.
     Mutates ``state`` in place to persist allocation/failure metadata.
+    The cache file is also written *immediately* after a successful salloc,
+    before any further work, so a SIGKILL between allocation and dispatch
+    never leaves an 8-h orphan job (race-review HIGH).
     """
     cached_job = state.get("job_id")
-    cached_pid = state.get("cursor_pid")
+    cached_pid = state.get("vscode_session_pid")
 
-    if cached_job and cached_pid == cursor_pid and squeue_job_alive(int(cached_job)):
-        # Reuse — the cache is good.
+    if cached_job and cached_pid == vscode_session and squeue_job_alive(int(cached_job)):
         return int(cached_job), None
 
-    # Cache stale — clear job_id so that, if salloc fails, we don't leave a
-    # ghost id in the file.
+    # Cache stale — clear job_id so a salloc failure can't leave a ghost id.
     state["job_id"] = None
 
-    job_id, cmd_str, stderr = allocate_via_salloc(cursor_pid)
+    job_id, cmd_str, stderr = allocate_via_salloc(vscode_session)
     if job_id is None:
         record_failure(state)
         state["salloc_command"] = cmd_str
         return None, stderr or "salloc failed (no job id parsed)"
 
     reset_failure_counters(state)
-    now_iso = _now_iso()
     state["job_id"] = job_id
-    state["allocated_at"] = now_iso
+    state["allocated_at"] = _now_iso()
     state["expires_at"] = (
-        datetime.datetime.now(datetime.timezone.utc)
+        datetime.datetime.now(datetime.UTC)
         + datetime.timedelta(seconds=8 * 3600)
     ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    state["cursor_pid"] = cursor_pid
-    state["cursor_session_id"] = os.environ.get("VSCODE_GIT_IPC_HANDLE", "")
+    state["vscode_session_pid"] = vscode_session
+    state["vscode_session_id"] = os.environ.get("VSCODE_GIT_IPC_HANDLE", "")
     state["salloc_command"] = cmd_str
+
+    # Persist the live job_id BEFORE returning — guarantees recovery from a
+    # SIGKILL between allocation and srun. write_cache is atomic (mkstemp +
+    # fsync + os.replace), so the file is either old or new, never partial.
+    write_cache(cache_p, state)
     return job_id, None
 
 
-def initial_state(cursor_pid: int) -> dict[str, Any]:
+def initial_state(vscode_session: int | str) -> dict[str, Any]:
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "job_id": None,
         "allocated_at": None,
         "expires_at": None,
-        "cursor_pid": cursor_pid,
-        "cursor_session_id": os.environ.get("VSCODE_GIT_IPC_HANDLE", ""),
+        "vscode_session_pid": vscode_session,
+        "vscode_session_id": os.environ.get("VSCODE_GIT_IPC_HANDLE", ""),
         "last_failure_at": None,
         "failure_count": 0,
         "salloc_command": "",
@@ -501,7 +532,7 @@ def run_with_lock(
     agent: str,
     agent_argv: list[str],
     install_dir: Path,
-    cursor_pid: int,
+    vscode_session: int | str,
 ) -> int:
     """Acquire the cache flock, then resolve a job and dispatch via srun."""
     cache_p = cache_path()
@@ -509,17 +540,18 @@ def run_with_lock(
     lock_path = cache_p.with_suffix(cache_p.suffix + ".lock")
 
     # Open the lock file for the whole read-modify-write cycle. fcntl.flock
-    # is advisory but every other agent-vscode instance honours it, so it's
-    # sufficient for serialising allocation across concurrent spawns.
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    # is advisory but every other agent-vscode instance honours it. O_CLOEXEC
+    # prevents the lock fd from being inherited by the srun child — otherwise
+    # the lock would be held for the whole agent session.
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
 
         existing = read_cache(cache_p)
-        # Cursor-restart invalidation: if cached cursor_pid != current ppid,
-        # the previous Cursor session is gone — start fresh (drops any
-        # poisoned failure counters from a since-restarted Cursor).
-        if existing and existing.get("cursor_pid") not in (cursor_pid, None):
+        # VSCode-restart invalidation: if cached session id doesn't match the
+        # current one, the previous VSCode session is gone — start fresh
+        # (drops any poisoned failure counters from a since-restarted VSCode).
+        if existing and existing.get("vscode_session_pid") not in (vscode_session, None):
             existing = None
 
         # 4-hour age-out: if the cached failure stamp is older than the
@@ -532,19 +564,19 @@ def run_with_lock(
             if age >= SALLOC_FAILURE_AGE_OUT_SECONDS:
                 reset_failure_counters(existing)
 
-        state = existing or initial_state(cursor_pid)
+        state = existing or initial_state(vscode_session)
         state["schema_version"] = CACHE_SCHEMA_VERSION
-        state["cursor_pid"] = cursor_pid
+        state["vscode_session_pid"] = vscode_session
 
         if should_refuse_persistent_failure(state):
             sys.stderr.write(
                 "agent-vscode: refusing to spawn — repeated salloc failures.\n"
-                "  Run 'coding-agents vscode-reset' or restart Cursor to clear state.\n"
+                "  Run 'coding-agents vscode-reset' or restart VSCode to clear state.\n"
             )
             write_cache(cache_p, state)
             return EXIT_REFUSE_PERSISTENT_FAILURE
 
-        job_id, error = get_or_allocate_job(state, cursor_pid)
+        job_id, error = get_or_allocate_job(state, vscode_session, cache_p)
         write_cache(cache_p, state)
 
         if job_id is None:
@@ -611,8 +643,8 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_NO_AGENT
         return EXIT_NO_AGENT
 
-    cursor_pid = cursor_pid_from_env()
-    return run_with_lock(agent, agent_argv, install_dir, cursor_pid)
+    vscode_session = vscode_session_key()
+    return run_with_lock(agent, agent_argv, install_dir, vscode_session)
 
 
 if __name__ == "__main__":

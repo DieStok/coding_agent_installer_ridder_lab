@@ -25,7 +25,7 @@ def test_reset_noop_when_no_cache(isolated_cache, monkeypatch):
 def test_reset_removes_cache_and_calls_scancel(isolated_cache):
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(cursor_pid=1)
+    state = agent_vscode.initial_state(vscode_session="ppid:1")
     state["job_id"] = 4242
     agent_vscode.write_cache(cache_p, state)
 
@@ -47,7 +47,7 @@ def test_reset_removes_cache_and_calls_scancel(isolated_cache):
 def test_reset_handles_scancel_failure_but_still_removes_cache(isolated_cache):
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(cursor_pid=1)
+    state = agent_vscode.initial_state(vscode_session="ppid:1")
     state["job_id"] = 4242
     agent_vscode.write_cache(cache_p, state)
 
@@ -67,7 +67,7 @@ def test_reset_handles_scancel_failure_but_still_removes_cache(isolated_cache):
 def test_reset_skips_scancel_when_no_job_id(isolated_cache):
     cache_p = agent_vscode.cache_path()
     cache_p.parent.mkdir(parents=True, exist_ok=True)
-    state = agent_vscode.initial_state(cursor_pid=1)
+    state = agent_vscode.initial_state(vscode_session="ppid:1")
     # job_id is None — no scancel needed
     agent_vscode.write_cache(cache_p, state)
 

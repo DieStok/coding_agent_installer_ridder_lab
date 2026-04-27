@@ -66,6 +66,21 @@ def run_uninstall() -> None:
     for f in modified:
         console.print(f"  [green]✓[/green] Cleaned {f}")
 
+    # 3b. VSCode wrapper hook cleanup — settings.json keys + jobid cache.
+    # The user's settings.json keeps their non-managed keys; we set ours to
+    # null so VSCode treats them as unset. The jobid cache + any live SLURM
+    # session is cleared via the same path as `vscode-reset`.
+    console.print("[bold]Removing VSCode wrapper hooks...[/bold]")
+    try:
+        from coding_agents.installer.policy_emit import unset_managed_vscode_settings
+        from coding_agents.commands.vscode_reset import run_vscode_reset
+        cleared = unset_managed_vscode_settings()
+        if cleared is not None:
+            console.print(f"  [green]✓[/green] Cleared wrapper keys in {cleared}")
+        run_vscode_reset()
+    except Exception as exc:
+        console.print(f"  [yellow]⚠ VSCode wrapper cleanup partial: {exc}[/yellow]")
+
     # 4. Prompt to delete install dir (requires interactive terminal)
     import sys
 
