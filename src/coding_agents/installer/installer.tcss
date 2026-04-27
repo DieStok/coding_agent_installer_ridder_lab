@@ -147,6 +147,17 @@ Switch {
     border: solid white;
     height: 12;
     margin: 1 0;
+    /* Scrollbars: white thumb on grey track so they stand out against the
+     * black panel + white text. Without this they blend with log content. */
+    scrollbar-color:        white grey;
+    scrollbar-color-hover:  white grey;
+    scrollbar-color-active: white grey;
+    scrollbar-background:        grey;
+    scrollbar-background-hover:  grey;
+    scrollbar-background-active: grey;
+    scrollbar-corner-color: grey;
+    scrollbar-size-vertical: 2;
+    scrollbar-size-horizontal: 1;
 }
 
 #verbose-log {
