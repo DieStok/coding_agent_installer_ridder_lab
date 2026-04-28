@@ -181,6 +181,110 @@ def merge_json_section(
     return result
 
 
+def unmerge_marked_entries(
+    file_path: Path,
+    section_path: str,
+    *,
+    string_entries_to_remove: list[str] | None = None,
+    marker_field: str = MARKER_KEY,
+) -> MergeResult | None:
+    """Symmetric inverse of :func:`merge_json_section` — strip our entries.
+
+    For dict sections: removes keys whose values carry the marker field.
+    For object lists: removes entries that carry the marker field.
+    For string lists (e.g. ``permissions.deny``): strings can't carry a
+        marker, so the caller must pass the exact strings to remove via
+        ``string_entries_to_remove`` (typically the contents of the
+        canonical ``deny_rules.json`` shipped in the install dir).
+
+    Returns ``None`` if the file is missing, malformed, or the section
+    doesn't exist. Returns a :class:`MergeResult` describing what was
+    removed otherwise. Empty leaf sections are left in place rather than
+    pruned — restoring the user's pre-install JSON shape exactly is not
+    possible since we don't know whether the section existed before.
+    """
+    result = MergeResult(file_path, section_path)
+
+    if not file_path.exists():
+        return None
+
+    try:
+        existing: dict = json.loads(file_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    keys = section_path.split(".")
+    parent: Any = existing
+    for key in keys[:-1]:
+        if not isinstance(parent, dict) or key not in parent:
+            return None
+        parent = parent[key]
+
+    section_key = keys[-1]
+    if not isinstance(parent, dict) or section_key not in parent:
+        return None
+
+    current_value = parent[section_key]
+    result.original = copy.deepcopy(current_value)
+
+    if isinstance(current_value, dict):
+        kept = {}
+        for k, v in current_value.items():
+            if isinstance(v, dict) and v.get(marker_field):
+                result.added_keys.append(k)  # "added" reused as "removed"
+            else:
+                kept[k] = v
+                result.preserved_keys.append(k)
+        parent[section_key] = kept
+
+    elif isinstance(current_value, list):
+        all_strings = all(isinstance(e, str) for e in current_value)
+        if all_strings:
+            removals = set(string_entries_to_remove or [])
+            kept_list: list = []
+            for entry in current_value:
+                if entry in removals:
+                    result.added_keys.append(str(entry))
+                else:
+                    kept_list.append(entry)
+                    result.preserved_keys.append(str(entry))
+            parent[section_key] = kept_list
+        else:
+            kept_list = []
+            for entry in current_value:
+                if isinstance(entry, dict) and entry.get(marker_field):
+                    result.added_keys.append(_hook_summary(entry))
+                else:
+                    kept_list.append(entry)
+                    result.preserved_keys.append(_hook_summary(entry))
+            parent[section_key] = kept_list
+
+    else:
+        return None
+
+    result.merged = copy.deepcopy(parent[section_key])
+
+    if not result.added_keys:
+        return result  # nothing to remove; don't rewrite the file
+
+    from coding_agents.dry_run import is_dry_run, would
+    from coding_agents.utils import secure_write_text
+
+    if is_dry_run():
+        would(
+            "json_merge",
+            "unmerge",
+            path=file_path,
+            section=section_path,
+            removed=len(result.added_keys),
+            preserved=len(result.preserved_keys),
+        )
+    else:
+        secure_write_text(file_path, json.dumps(existing, indent=2) + "\n")
+
+    return result
+
+
 def _hook_summary(entry: Any) -> str:
     """Short summary of a hook entry for display."""
     if isinstance(entry, dict):

@@ -1,6 +1,7 @@
 """uninstall command — clean removal of all installed components."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -12,6 +13,190 @@ from coding_agents.installer.fs_ops import dry_run_rmtree, dry_run_unlink
 from coding_agents.utils import remove_shell_block
 
 console = Console()
+
+
+def _restore_backup(target: Path) -> bool:
+    """Rename ``<target>.bak`` back to ``target`` if it exists.
+
+    ``safe_symlink`` creates the .bak when it replaces a real file with a
+    symlink, so this is the inverse for any agent's instruction file
+    (CLAUDE.md, AGENTS.md, GEMINI.md). Returns True if a backup was
+    restored.
+    """
+    backup = target.with_suffix(target.suffix + ".bak")
+    if not backup.exists():
+        return False
+    if is_dry_run():
+        would("file_rename", "restore_backup", src=backup, dst=target)
+        return True
+    if target.exists() or target.is_symlink():
+        # Symlink should already be gone by this point in uninstall, but
+        # guard against re-entry: don't clobber a real file the user put
+        # back themselves.
+        if target.is_symlink():
+            target.unlink()
+        else:
+            return False
+    backup.rename(target)
+    return True
+
+
+# Template-introduced top-level keys that ``install_managed_claude_settings``
+# writes from ``bundled/templates/managed-claude-settings.json``. On
+# uninstall we delete each one *only when its current value still matches
+# the install-time default* — if the user changed the value post-install,
+# leave their edit alone. The ``_comment`` field is a prefix-match because
+# the exact wording can drift across releases. Update this list in lockstep
+# with the template.
+_TEMPLATE_KEY_DEFAULTS: list[tuple[str, object]] = [
+    ("_comment", "Default Claude Code settings emitted by coding-agents installer"),
+    ("allowManagedMcpServersOnly", True),
+    ("permissions.disableBypassPermissionsMode", "disable"),
+    ("sandbox.failIfUnavailable", True),
+]
+
+
+def _restore_oldest_settings_backup() -> Path | None:
+    """Restore the oldest ``~/.claude/settings.backup-YYYY-MM-DD.json``.
+
+    ``policy_emit._backup_if_drifted`` writes one dated backup per day
+    before overwriting ``~/.claude/settings.json`` from the template. The
+    *oldest* dated backup is the user's pre-install version (later
+    backups are post-install re-installs); restoring it is the most
+    faithful inverse of install. Returns the source path if restored,
+    ``None`` if no backup exists.
+
+    The other dated backups are left in place so the user can inspect
+    them if curious; cleaning them up would be guesswork.
+    """
+    home = Path.home()
+    target = home / ".claude" / "settings.json"
+    backups = sorted((home / ".claude").glob("settings.backup-*.json"))
+    if not backups:
+        return None
+    oldest = backups[0]
+    if is_dry_run():
+        would("file_rename", "restore_settings_backup", src=oldest, dst=target)
+        return oldest
+    target.write_text(oldest.read_text())
+    oldest.unlink()
+    return oldest
+
+
+def _strip_template_keys(path: Path) -> int:
+    """Remove template-introduced keys whose value still matches install
+    defaults. Returns the count removed.
+
+    Surgical inverse of ``install_managed_claude_settings`` for the case
+    where no dated backup exists (user had no ``settings.json`` before
+    install, so the install path wrote a fresh file from the template
+    rather than backing one up).
+    """
+    if not path.exists():
+        return 0
+    try:
+        data: dict = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    removed = 0
+    for key_path, expected in _TEMPLATE_KEY_DEFAULTS:
+        parts = key_path.split(".")
+        parent: object = data
+        for p in parts[:-1]:
+            if not isinstance(parent, dict) or p not in parent:
+                parent = None
+                break
+            parent = parent[p]
+        if not isinstance(parent, dict):
+            continue
+        leaf = parts[-1]
+        if leaf not in parent:
+            continue
+        actual = parent[leaf]
+        if key_path == "_comment":
+            # Prefix match — the exact wording may drift across releases.
+            matches = isinstance(actual, str) and isinstance(expected, str) \
+                and actual.startswith(expected)
+        else:
+            matches = actual == expected
+        if matches:
+            del parent[leaf]
+            removed += 1
+
+    if removed == 0:
+        return 0
+
+    if is_dry_run():
+        would("json_merge", "strip_template_keys", path=path, removed=removed)
+        return removed
+
+    from coding_agents.utils import secure_write_text
+    secure_write_text(path, json.dumps(data, indent=2) + "\n")
+    return removed
+
+
+def _unmerge_settings_json(install_dir: Path) -> None:
+    """Revert coding-agents writes to user JSON config files.
+
+    Three layers of cleanup, in order:
+      1. If ``~/.claude/settings.backup-YYYY-MM-DD.json`` exists, restore
+         the oldest one — that's the user's pre-install settings.json. Skip
+         the marker-strip + template-key strip for that file since the
+         restored content predates both.
+      2. Otherwise, strip marker-tagged entries (hooks, deny rules) and
+         null template-introduced keys whose values still match defaults.
+      3. Always strip marker-tagged ``mcpServers`` from ``~/.mcp.json``.
+    """
+    from coding_agents.merge_settings import unmerge_marked_entries
+
+    home = Path.home()
+    settings_path = home / ".claude" / "settings.json"
+    mcp_path = home / ".mcp.json"
+
+    restored = _restore_oldest_settings_backup()
+    if restored:
+        console.print(
+            f"  [green]✓[/green] Restored {restored.name} → {settings_path.name}"
+        )
+
+    deny_strings: list[str] | None = None
+    deny_path = install_dir / "hooks" / "deny_rules.json"
+    if deny_path.exists():
+        try:
+            deny_data = json.loads(deny_path.read_text())
+            deny_strings = deny_data.get("deny", []) or None
+        except (json.JSONDecodeError, OSError):
+            deny_strings = None
+
+    targets: list[tuple[Path, str, list[str] | None]] = [
+        (mcp_path, "mcpServers", None),
+    ]
+    if not restored:
+        targets.extend([
+            (settings_path, "hooks.SessionStart", None),
+            (settings_path, "hooks.Stop", None),
+            (settings_path, "permissions.deny", deny_strings),
+        ])
+
+    for path, section, strings in targets:
+        result = unmerge_marked_entries(
+            path, section, string_entries_to_remove=strings
+        )
+        if result and result.added_keys:
+            console.print(
+                f"  [green]✓[/green] {path.name} {section}: "
+                f"removed {len(result.added_keys)}, "
+                f"preserved {len(result.preserved_keys)}"
+            )
+
+    if not restored:
+        stripped = _strip_template_keys(settings_path)
+        if stripped:
+            console.print(
+                f"  [green]✓[/green] {settings_path.name}: "
+                f"removed {stripped} template-introduced keys"
+            )
 
 
 def run_uninstall() -> None:
@@ -39,6 +224,10 @@ def run_uninstall() -> None:
         if instr_file.is_symlink():
             dry_run_unlink(instr_file)
             console.print(f"  [green]✓[/green] Removed {instr_file}")
+        if _restore_backup(instr_file):
+            console.print(
+                f"  [green]✓[/green] Restored {instr_file}.bak → {instr_file.name}"
+            )
 
         # Remove skill symlinks
         if agent.get("skills_dir"):
@@ -59,6 +248,12 @@ def run_uninstall() -> None:
             if item.name.startswith("agent-") and item.is_file():
                 dry_run_unlink(item)
                 console.print(f"  [green]✓[/green] Removed {item}")
+
+    # 2b. Strip coding-agents-managed entries from user JSON config files.
+    # Done before the install-dir prompt so we can still read the canonical
+    # deny_rules.json (string entries in permissions.deny can't carry markers).
+    console.print("[bold]Removing managed settings entries...[/bold]")
+    _unmerge_settings_json(install_dir)
 
     # 3. Remove shell integration
     console.print("[bold]Removing shell integration...[/bold]")

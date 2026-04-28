@@ -206,6 +206,72 @@ def opencode_path_shim_check(install_dir: Path) -> CheckRow:
 
 
 # --------------------------------------------------------------------------- #
+# VSCode-fallback Python ≥ 3.7 probe
+# --------------------------------------------------------------------------- #
+
+# The PATH VSCode falls back to when its `/bin/bash -lic 'printf $PATH'`
+# probe times out (>10s). Verbatim from the failure log on this cluster;
+# this is the closest approximation to "what the extension's spawn env
+# looks like in the worst case".
+_VSCODE_FALLBACK_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Search order mirrors the per-extension stub in wrapper_vscode.py — a
+# pass here means the stub's probe will succeed too.
+_PYTHON_CANDIDATES = (
+    "python3.13", "python3.12", "python3.11", "python3.10",
+    "python3.9", "python3.8", "python3.7", "python3",
+)
+
+
+def vscode_python_version_check() -> CheckRow:
+    """Verify a Python ≥ 3.7 is reachable on the bare PATH VSCode falls back
+    to when the login-shell PATH probe times out.
+
+    Mirrors the per-extension stub's probe so a pass here implies the stub
+    will also resolve a working Python at spawn time. Catches the
+    ``SyntaxError: future feature annotations is not defined`` failure mode
+    where ``/usr/bin/python3`` is ≤ 3.6 and the extension can't reach a
+    newer Python because ~/.bashrc was too slow to source.
+    """
+    env = {"PATH": _VSCODE_FALLBACK_PATH}
+    for cand in _PYTHON_CANDIDATES:
+        try:
+            ok = subprocess.run(
+                [cand, "-c",
+                 "import sys; sys.exit(0 if sys.version_info >= (3, 7) else 1)"],
+                capture_output=True, env=env, timeout=5, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if ok.returncode != 0:
+            continue
+        try:
+            ver = subprocess.run(
+                [cand, "-c",
+                 "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+                capture_output=True, env=env, text=True, timeout=5, check=False,
+            )
+            version = ver.stdout.strip() or "unknown"
+        except (OSError, subprocess.TimeoutExpired):
+            version = "unknown"
+        return (
+            "VSCode-fallback Python >= 3.7",
+            "pass",
+            f"{cand} ({version}) on bare PATH",
+        )
+
+    return (
+        "VSCode-fallback Python >= 3.7",
+        "warn",
+        "no python>=3.7 on bare PATH (/usr/local/bin:/usr/bin:...) — "
+        "VSCode extensions will fail to spawn agent-vscode whenever the "
+        "login-shell PATH probe times out. Fix: install a system "
+        "python>=3.7, or set terminal.integrated.env.linux.PATH in VSCode "
+        "user settings, or speed up ~/.bashrc.",
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Escape-hatch acknowledgement
 # --------------------------------------------------------------------------- #
 

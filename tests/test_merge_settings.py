@@ -117,6 +117,92 @@ def test_merge_json_list_appends():
         path.unlink(missing_ok=True)
 
 
+def test_unmerge_marked_entries_dict():
+    from coding_agents.merge_settings import unmerge_marked_entries, MARKER_KEY
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = Path(f.name)
+
+    try:
+        path.write_text(json.dumps({
+            "mcpServers": {
+                "ours": {"command": "x", MARKER_KEY: True},
+                "user": {"command": "y"},
+            }
+        }))
+
+        result = unmerge_marked_entries(path, "mcpServers")
+        assert result is not None
+        assert "ours" in result.added_keys  # removed
+        assert "user" in result.preserved_keys
+
+        data = json.loads(path.read_text())
+        assert "ours" not in data["mcpServers"]
+        assert data["mcpServers"]["user"] == {"command": "y"}
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_unmerge_marked_entries_object_list():
+    from coding_agents.merge_settings import unmerge_marked_entries, MARKER_KEY
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = Path(f.name)
+
+    try:
+        path.write_text(json.dumps({
+            "hooks": {
+                "SessionStart": [
+                    {"matcher": "ours", "hooks": [{"command": "x"}], MARKER_KEY: True},
+                    {"matcher": "user", "hooks": [{"command": "y"}]},
+                ]
+            }
+        }))
+
+        result = unmerge_marked_entries(path, "hooks.SessionStart")
+        assert result is not None and len(result.added_keys) == 1
+
+        data = json.loads(path.read_text())
+        remaining = data["hooks"]["SessionStart"]
+        assert len(remaining) == 1
+        assert remaining[0]["matcher"] == "user"
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_unmerge_marked_entries_string_list():
+    from coding_agents.merge_settings import unmerge_marked_entries
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = Path(f.name)
+
+    try:
+        path.write_text(json.dumps({
+            "permissions": {
+                "deny": ["Read(./.env)", "Read(./secrets/*)", "user-rule"]
+            }
+        }))
+
+        result = unmerge_marked_entries(
+            path,
+            "permissions.deny",
+            string_entries_to_remove=["Read(./.env)", "Read(./secrets/*)"],
+        )
+        assert result is not None
+        assert len(result.added_keys) == 2
+
+        data = json.loads(path.read_text())
+        assert data["permissions"]["deny"] == ["user-rule"]
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_unmerge_marked_entries_missing_file():
+    from coding_agents.merge_settings import unmerge_marked_entries
+
+    assert unmerge_marked_entries(Path("/no/such/file.json"), "anything") is None
+
+
 def test_merge_toml_section():
     from coding_agents.merge_settings import merge_toml_section, TOML_MARKER_START, TOML_MARKER_END
 

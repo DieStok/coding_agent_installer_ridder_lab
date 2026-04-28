@@ -247,12 +247,18 @@ def _gather_vscode_checks(
         codex_version_drift_check,
         no_wrap_acknowledgement,
         opencode_path_shim_check,
+        vscode_python_version_check,
     )
 
     rows: list[tuple[str, str, str]] = []
 
     sif_str = config.get("sandbox_sif_path", "")
     sif_path = Path(sif_str).expanduser() if sif_str else None
+
+    # Always run the Python-version probe — every wrappable agent uses
+    # the same agent-vscode helper, and the failure mode is identical
+    # across them.
+    rows.append(vscode_python_version_check())
 
     if "codex" in agents:
         drift = codex_version_drift_check(sif_path)

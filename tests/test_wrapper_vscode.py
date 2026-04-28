@@ -95,6 +95,47 @@ def test_extension_stubs_dict_has_four_entries():
     assert set(EXTENSION_STUBS.keys()) == {"pi", "claude", "codex", "opencode"}
 
 
+def test_stub_probes_for_python_3_7(install_dir):
+    """The stub must search python3.7..3.13 explicitly so it doesn't fall
+    through to a 3.6 ``python3`` (which chokes on ``from __future__ import
+    annotations`` before our code runs)."""
+    written = emit_extension_stubs(install_dir, ["claude"])
+    content = written[0].read_text()
+    for cand in ("python3.7", "python3.8", "python3.9", "python3.10",
+                 "python3.11", "python3.12", "python3.13"):
+        assert cand in content, f"stub must probe for {cand}"
+    assert "version_info >= (3, 7)" in content
+    assert "exit 13" in content
+
+
+def test_stub_refuses_when_no_python_found(install_dir, tmp_path):
+    """If the stub runs with a PATH that has no Python ≥ 3.7, it should
+    exit 13 and emit a self-diagnosing error rather than fall through."""
+    import shutil
+    import subprocess
+
+    emit_extension_stubs(install_dir, ["claude"])
+    stub = install_dir / "bin" / "agent-claude-vscode"
+
+    # Build a PATH with bash present (so the shebang resolves) but no
+    # python interpreter. Symlink bash into a fresh dir.
+    bin_only = tmp_path / "bash-only"
+    bin_only.mkdir()
+    bash = shutil.which("bash")
+    assert bash, "test host has no bash"
+    (bin_only / "bash").symlink_to(bash)
+
+    result = subprocess.run(
+        [str(stub)],
+        capture_output=True,
+        text=True,
+        env={"PATH": str(bin_only)},
+        check=False,
+    )
+    assert result.returncode == 13, (result.returncode, result.stderr)
+    assert "no python >= 3.7" in result.stderr
+
+
 def test_stubs_resolve_symlinks_via_readlink(install_dir):
     """Regression: bin/path-shim/opencode symlink → ../agent-opencode-vscode
     needs the stub to resolve $0 through the symlink so it finds agent-vscode
@@ -118,12 +159,15 @@ def test_opencode_path_shim_invocation_finds_agent_vscode(install_dir, tmp_path)
     emit_path_shim(install_dir)
 
     # Fake agent-vscode that just prints its own dir + args, so we can
-    # tell which path it was launched from.
+    # tell which path it was launched from. The new stub invokes this via
+    # ``python <helper>`` rather than relying on the helper's shebang, so
+    # the helper must be Python (not bash).
     helper = install_dir / "bin" / "agent-vscode"
     helper.write_text(
-        '#!/usr/bin/env bash\n'
-        'echo "AGENT_VSCODE_DIR=$(dirname "$0")"\n'
-        'echo "AGENT_VSCODE_ARGS=$@"\n'
+        '#!/usr/bin/env python3\n'
+        'import os, sys\n'
+        'print("AGENT_VSCODE_DIR=" + os.path.dirname(sys.argv[0]))\n'
+        'print("AGENT_VSCODE_ARGS=" + " ".join(sys.argv[1:]))\n'
     )
     helper.chmod(0o755)
 

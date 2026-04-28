@@ -2,11 +2,58 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from coding_agents.commands import doctor
+
+
+# ----------- VSCode-fallback Python ≥ 3.7 probe -----------
+
+def test_vscode_python_check_passes_when_modern_python_on_path(monkeypatch):
+    from coding_agents.commands import doctor_vscode
+
+    def fake_run(cmd, *a, **kw):
+        # First arg is the candidate interpreter; let "python3" succeed.
+        # The version-gate call uses sys.exit(...); the version-print
+        # call uses print(...). Disambiguate by 'print' since both
+        # commands contain 'version_info'.
+        if cmd[0] != "python3":
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        if "print" in cmd[2]:
+            return subprocess.CompletedProcess(cmd, 0, "3.11.5\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    name, status, fix = doctor_vscode.vscode_python_version_check()
+    assert status == "pass"
+    assert "3.11.5" in fix
+
+
+def test_vscode_python_check_warns_when_only_old_python(monkeypatch):
+    from coding_agents.commands import doctor_vscode
+
+    def fake_run(cmd, *a, **kw):
+        # Every candidate fails the version check (rc=1 mimics 3.6).
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    name, status, fix = doctor_vscode.vscode_python_version_check()
+    assert status == "warn"
+    assert "no python>=3.7" in fix
+
+
+def test_vscode_python_check_handles_missing_interpreters(monkeypatch):
+    from coding_agents.commands import doctor_vscode
+
+    def fake_run(cmd, *a, **kw):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    name, status, fix = doctor_vscode.vscode_python_version_check()
+    assert status == "warn"
 
 
 # ----------- A1: --probe-sif -----------
