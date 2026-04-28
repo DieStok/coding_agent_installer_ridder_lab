@@ -315,6 +315,14 @@ def run_uninstall() -> None:
 
     console.print("\n[green bold]Uninstall complete.[/green bold]")
     console.print(
+        "[bold yellow]Reload your shell[/bold yellow] before invoking agent "
+        "commands again: [bold]exec $SHELL -l[/bold] (or open a new terminal). "
+        "Your current shell still has the old [bold]$PATH[/bold] and a cached "
+        "lookup for [bold]claude[/bold] / [bold]codex[/bold] / etc. pointing at "
+        f"the now-removed {install_dir}/bin — running them without reloading "
+        "will fail with 'no such file or directory'."
+    )
+    console.print(
         "[dim]Note: Claude Code at ~/.claude/bin/ was not removed — "
         "run `claude uninstall` separately if needed.[/dim]"
     )
